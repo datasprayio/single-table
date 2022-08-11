@@ -4,10 +4,9 @@
 - Schema definition with serialization and deserialization
 - Utility tools for expressions/conditions building, retries, paging, and more...
 
-Schema:
+It's as simple as:
 
 ```java
-
 @Value
 @DynamoTable(type = Primary, partitionKeys = "accountId", rangePrefix = "account")
 @DynamoTable(type = Gsi, indexNumber = 1, partitionKeys = {"apiKey"}, rangePrefix = "accountByApiKey")
@@ -22,9 +21,53 @@ class Account {
     @ToString.Exclude
     String apiKey;
 }
+
+...
+
+// Initialize schema
+SingleTable singleTable = SingleTable.builder()
+        .dynamoDoc(dynamoDoc)
+        .tablePrefix("project").build();
+TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
+
+// Insert new account
+Account account = new Account("8426", "matus@example.com", null);
+schema.table().putItem(new PutItemSpec().withItem(schema.toItem(account)));
+
+// Fetch other account
+Optional<Account> otherAccountOpt = Optional.ofNullable(schema.fromItem(schema.table().getItem(
+        schema.primaryKey(Map.of("accountId","9473")))));
 ```
 
+Okay, it could be simpler...
+
+## Installation
+
+### Maven
+
+```xml
+<dependency>
+    <groupId>io.dataspray</groupId>
+    <artifactId>single-table</artifactId>
+    <version>${single-table.version}</version>
+</dependency>
+```
+
+Latest release in Maven Central is [here](https://search.maven.org/artifact/io.dataspray/single-table).
+
 ## Use cases
+
+- [Getting started](#getting-started)
+- [Create our table](#create-our-table)
+- [Insert an item](#insert-an-item)
+- [Update and Condition expressions builder](#update-and-condition-expressions-builder)
+- [Select an item](#select-an-item)
+- [Query ranges with paging](#query-ranges-with-paging)
+- [Scan records of specific type](#scan-records-of-specific-type)
+- [Upsert (Update or create if missing)](#upsert-update-or-create-if-missing))
+- [Filter records](#filter-records)
+
+### Getting started
 
 In our examples, we skip the steps of initializing `SingleTable` and parsing our `schema`. Here is how you can do this:
 
@@ -48,7 +91,7 @@ your schemas. But don't worry you can always add more later.
 singleTable.createTableIfNotExists(2, 2);
 ```
 
-### Insert
+### Insert an item
 
 ```java
 schema.table().putItem(new PutItemSpec().withItem(schema.toItem(myAccount)));
@@ -87,7 +130,7 @@ Expression expression = expressionBuilder.build();
     .withValueMap(expression.valMap().orElse(null))
 ```
 
-### Select
+### Select an item
 
 ```java
 Account account = schema.fromItem(schema.table().getItem(
