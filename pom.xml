@@ -189,7 +189,7 @@
                 <version>${license-maven-plugin.version}</version>
                 <configuration>
                     <!-- Due to performance, only run this when necessary -->
-                    <skip>false</skip>
+                    <skip>true</skip>
                     <aggregate>true</aggregate>
                     <headerDefinitions>
                         <headerDefinition>tools/comment-template-SINGLE_LINE_DOUBLEDASH_STYLE.xml
