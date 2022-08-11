@@ -203,7 +203,7 @@ And our usage would be:
 ```java
 String catId = "A18D5B00";
 // Deterministic purrtition number given catId and partition count of 8
-int partition = singleTable.util().deterministicPartition(catId, 8);
+int partition = singleTable.deterministicPartition(catId, 8);
 
 Cat myCat = new Cat(catId, partition);
 

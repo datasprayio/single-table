@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import com.amazonaws.services.dynamodbv2.document.BatchGetItemOutcome;
+import com.amazonaws.services.dynamodbv2.document.BatchWriteItemOutcome;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
+import com.amazonaws.services.dynamodbv2.document.Item;
 import com.google.gson.Gson;
 import lombok.Builder;
 import lombok.NonNull;
+
+import java.util.stream.Stream;
 
 public class SingleTable implements DynamoMapper {
     DynamoMapperImpl mapper;
@@ -38,7 +43,15 @@ public class SingleTable implements DynamoMapper {
         return mapper.parseGlobalSecondaryIndexSchema(indexNumber, objClazz);
     }
 
-    public DynamoUtil util() {
-        return util;
+    public Stream<Item> retryUnprocessed(BatchGetItemOutcome outcome) {
+        return util.retryUnprocessed(outcome);
+    }
+
+    public void retryUnprocessed(BatchWriteItemOutcome outcome) {
+        util.retryUnprocessed(outcome);
+    }
+
+    public int deterministicPartition(String input, int partitionCount) {
+        return util.deterministicPartition(input, partitionCount);
     }
 }
