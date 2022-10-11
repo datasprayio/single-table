@@ -52,6 +52,6 @@ public class SingleTable implements DynamoMapper {
     }
 
     public int deterministicPartition(String input, int partitionCount) {
-        return util.deterministicPartition(input, partitionCount);
+        return DynamoUtil.deterministicPartition(input, partitionCount);
     }
 }

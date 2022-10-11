@@ -5,13 +5,20 @@ package io.dataspray.singletable;
 import com.amazonaws.services.dynamodbv2.document.Item;
 import com.amazonaws.services.dynamodbv2.document.KeyAttribute;
 import com.amazonaws.services.dynamodbv2.document.PrimaryKey;
+import com.amazonaws.services.dynamodbv2.document.api.QueryApi;
+import com.amazonaws.services.dynamodbv2.document.api.ScanApi;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 import java.util.Map;
+import java.util.Optional;
 
 public interface Schema<T> {
+    QueryApi queryApi();
+
+    ScanApi scanApi();
+
     PrimaryKey primaryKey(T obj);
 
     PrimaryKey primaryKey(Map<String, Object> values);
@@ -21,6 +28,16 @@ public interface Schema<T> {
     KeyAttribute partitionKey(T obj);
 
     KeyAttribute partitionKey(Map<String, Object> values);
+
+    /** Use if shardKeys are set but partitionKeys are empty */
+    KeyAttribute shardKey(int shard);
+
+    /** Use if shardKeys and partitionKeys are both needed */
+    KeyAttribute shardKey(int shard, Map<String, Object> values);
+
+    String partitionKeyValue(T obj);
+
+    String partitionKeyValue(Map<String, Object> values);
 
     String rangeKeyName();
 
@@ -57,6 +74,11 @@ public interface Schema<T> {
 
     T fromAttrMap(Map<String, AttributeValue> attrMap);
 
+
+    /** Shard count or -1 if shardKeys are not set */
+    int shardCount();
+
+
     String upsertExpression(T object, Map<String, String> nameMap, Map<String, Object> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression);
 
     String upsertExpressionAttrVal(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression);
@@ -64,4 +86,12 @@ public interface Schema<T> {
     String serializeLastEvaluatedKey(Map<String, AttributeValue> lastEvaluatedKey);
 
     PrimaryKey toExclusiveStartKey(String serializedlastEvaluatedKey);
+
+    String serializeShardedLastEvaluatedKey(Optional<Map<String, AttributeValue>> lastEvaluatedKeyOpt, int shard);
+
+    ShardAndExclusiveStartKey wrapShardedLastEvaluatedKey(Optional<Map<String, AttributeValue>> lastEvaluatedKeyOpt, int shard);
+
+    String serializeShardedLastEvaluatedKey(ShardAndExclusiveStartKey shardAndExclusiveStartKey);
+
+    ShardAndExclusiveStartKey toShardedExclusiveStartKey(String serializedShardedLastEvaluatedKey);
 }

@@ -179,7 +179,7 @@ do {
 
 ### Scan records of specific type
 
-You may have Cats and Dogs inside your single-table design and you want to retrieve all the Cat without having to also
+You may have Cats and Dogs inside your single-table design and you want to retrieve all the Cats without having to also
 iterate over all the dogs.
 
 One way to do this is using a DynamoDB technique
@@ -191,10 +191,9 @@ instead.
 Our schema can look like this:
 
 ```java
-    @DynamoTable(type = Primary, partitionKeys = {"partition"}, rangePrefix = "cat", rangeKeys = "catId")
+    @DynamoTable(type = Primary, shardKeys = {"catId"}, shardPrefix = "cat", shardCount = 100, rangePrefix = "cat", rangeKeys = "catId")
     public class Cat {
         @NonNull String catId;
-        @NonNull long partition;
     }
 ```
 
@@ -202,19 +201,34 @@ And our usage would be:
 
 ```java
 String catId = "A18D5B00";
-// Deterministic purrtition number given catId and partition count of 8
-int partition = singleTable.deterministicPartition(catId, 8);
 
-Cat myCat = new Cat(catId, partition);
+Cat myCat = new Cat(catId);
 
-// Insertion is identical
+// Insertion is same as before, sharding is done under the hood
 schema.table().putItem(new PutItemSpec().withItem(schema.toItem(myCat)));
 
-// Retrieving cat requires supplying the partition number
+// Retrieving cat is also same as before
 Cat otherCat = schema.fromItem(schema.table().getItem(
         schema.primaryKey(Map.of(
-                "catId", catId,
-                "partition", partition))));
+                "catId", catId))));
+
+// Finally let's query some cats without an entire table scan
+ShardPageResult<Cat> result = dynamoUtil.fetchShardNextPage(
+                schema,
+                /* Pagination token */ Optional.empty(),
+                /* page size */ 100);
+processCats(result.getItems());
+
+// Finally let's dump all our cats using pagination
+Optional<String> cursorOpt = Optional.empty();
+do {
+        ShardPageResult<Cat> result = dynamoUtil.fetchShardNextPage(
+                schema,
+                cursorOpt,
+                /* page size */ 100);
+        cursorOpt = result.getCursorOpt();
+        processCats(result.getItems());
+} while (cursorOpt.isPresent());
 ```
 
 ### Upsert (Update or create if missing)

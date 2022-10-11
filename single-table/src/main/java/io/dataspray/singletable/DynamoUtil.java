@@ -6,13 +6,21 @@ import com.amazonaws.services.dynamodbv2.document.BatchGetItemOutcome;
 import com.amazonaws.services.dynamodbv2.document.BatchWriteItemOutcome;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import com.amazonaws.services.dynamodbv2.document.Item;
+import com.amazonaws.services.dynamodbv2.document.Page;
+import com.amazonaws.services.dynamodbv2.document.QueryOutcome;
+import com.amazonaws.services.dynamodbv2.document.spec.QuerySpec;
 import com.google.common.base.Charsets;
+import com.google.common.collect.ImmutableList;
 import com.google.common.hash.Hashing;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import java.util.Collection;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+
+import static com.google.common.base.Preconditions.checkArgument;
 
 class DynamoUtil {
 
@@ -61,7 +69,40 @@ class DynamoUtil {
         }
     }
 
-    public int deterministicPartition(String input, int partitionCount) {
+    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
+        return fetchShardNextPage(schema, cursorOpt, maxPageSize, Map.of());
+    }
+
+    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
+        checkArgument(maxPageSize > 0, "Max page size must be greater than zero");
+        Optional<ShardAndExclusiveStartKey> shardAndExclusiveStartKeyOpt = cursorOpt.map(schema::toShardedExclusiveStartKey);
+        ImmutableList.Builder<T> itemsBuilder = ImmutableList.builder();
+        do {
+            int shard = shardAndExclusiveStartKeyOpt.map(ShardAndExclusiveStartKey::getShard).orElse(0);
+            Page<Item, QueryOutcome> page = schema.queryApi().query(new QuerySpec()
+                            .withHashKey(schema.shardKey(shard, values))
+                            .withMaxPageSize(maxPageSize)
+                            .withExclusiveStartKey(shardAndExclusiveStartKeyOpt
+                                    .flatMap(ShardAndExclusiveStartKey::getExclusiveStartKey)
+                                    .orElse(null)))
+                    .firstPage();
+            shardAndExclusiveStartKeyOpt = Optional.ofNullable(page.getLowLevelResult().getQueryResult().getLastEvaluatedKey())
+                    .map(lastEvaluatedKey -> schema.wrapShardedLastEvaluatedKey(Optional.of(lastEvaluatedKey), shard))
+                    .or(() -> shard < (schema.shardCount() - 1)
+                            ? Optional.of(schema.wrapShardedLastEvaluatedKey(Optional.empty(), shard + 1))
+                            : Optional.empty());
+            ImmutableList<T> nextItems = page.getLowLevelResult().getItems().stream()
+                    .map(schema::fromItem)
+                    .collect(ImmutableList.toImmutableList());
+            maxPageSize -= nextItems.size();
+            itemsBuilder.addAll(nextItems);
+        } while (maxPageSize > 0 && shardAndExclusiveStartKeyOpt.isPresent());
+        return new ShardPageResult<T>(
+                itemsBuilder.build(),
+                shardAndExclusiveStartKeyOpt.map(schema::serializeShardedLastEvaluatedKey));
+    }
+
+    public static int deterministicPartition(String input, int partitionCount) {
         return Math.abs(Hashing.murmur3_32().hashString(input, Charsets.UTF_8).asInt() % partitionCount);
     }
 }

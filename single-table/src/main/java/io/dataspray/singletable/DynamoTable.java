@@ -20,7 +20,16 @@ public @interface DynamoTable {
     int indexNumber() default -1;
 
     /** Partition keys to be compounded together. Lsi should match Primary's keys */
-    String[] partitionKeys();
+    String[] partitionKeys() default {};
+
+    /** Keys to be hashed together to form a partition. Do not modify after usage, carefully plan ahead. */
+    String[] shardKeys() default {};
+
+    /** If using shardKeys, number of shards to use. Do not modify after usage, carefully plan ahead. */
+    int shardCount() default -1;
+
+    /** Partition key prefix to be used with sharding */
+    String shardPrefix() default "shard";
 
     /** Sort keys to be compounded together */
     String[] rangeKeys() default {};

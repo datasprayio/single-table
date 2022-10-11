@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import com.amazonaws.services.dynamodbv2.document.Attribute;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import com.amazonaws.services.dynamodbv2.document.Index;
 import com.amazonaws.services.dynamodbv2.document.Item;
 import com.amazonaws.services.dynamodbv2.document.KeyAttribute;
 import com.amazonaws.services.dynamodbv2.document.PrimaryKey;
 import com.amazonaws.services.dynamodbv2.document.Table;
+import com.amazonaws.services.dynamodbv2.document.api.QueryApi;
+import com.amazonaws.services.dynamodbv2.document.api.ScanApi;
 import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.BillingMode;
@@ -30,6 +33,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.gson.Gson;
+import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 import io.dataspray.singletable.DynamoConvertersProxy.CollectionMarshallerAttrVal;
 import io.dataspray.singletable.DynamoConvertersProxy.CollectionMarshallerItem;
@@ -41,6 +45,8 @@ import io.dataspray.singletable.DynamoConvertersProxy.MarshallerAttrVal;
 import io.dataspray.singletable.DynamoConvertersProxy.MarshallerItem;
 import io.dataspray.singletable.DynamoConvertersProxy.UnMarshallerAttrVal;
 import io.dataspray.singletable.DynamoConvertersProxy.UnMarshallerItem;
+import lombok.NonNull;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 
 import java.lang.reflect.Constructor;
@@ -58,6 +64,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -179,16 +186,60 @@ class DynamoMapperImpl implements DynamoMapper {
                 : type.name().toLowerCase() + "sk" + indexNumber;
     }
 
+    public <T> String fieldMap(T obj, Field field) {
+        try {
+            return gson.toJson(checkNotNull(field.get(obj)));
+        } catch (IllegalAccessException ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    public String mapMap(Map<String, Object> values, String partitionKey) {
+        return gson.toJson(checkNotNull(values.get(partitionKey), "Partition key missing value for %s", partitionKey));
+    }
+
+    private <T> Function<T, String> getPartitionKeyValueObjGetter(Field[] partitionKeyFields, Field[] shardKeyFields, int shardCount, String shardPrefix) {
+        return getPartitionKeyValueGetter(partitionKeyFields, shardKeyFields, shardCount, shardPrefix, this::fieldMap);
+    }
+
+    private Function<Map<String, Object>, String> getPartitionKeyValueMapGetter(String[] partitionKeys, String[] shardKeys, int shardCount, String shardPrefix) {
+        return getPartitionKeyValueGetter(partitionKeys, shardKeys, shardCount, shardPrefix, this::mapMap);
+    }
+
+    private <T, F> Function<T, String> getPartitionKeyValueGetter(F[] partitionKeyFields, F[] shardKeyFields, int shardCount, String shardPrefix, BiFunction<T, F, String> fieldMapper) {
+        BiFunction<T, Integer, String> partitionKeyValueGetter = getPartitionKeyValueGetter(partitionKeyFields, shardPrefix, fieldMapper);
+        return shardKeyFields.length == 0
+                ? obj -> partitionKeyValueGetter.apply(obj, null)
+                : obj -> partitionKeyValueGetter.apply(obj,
+                DynamoUtil.deterministicPartition(
+                        StringSerdeUtil.mergeStrings(
+                                Arrays.stream(shardKeyFields)
+                                        .map(field -> fieldMapper.apply(obj, field))
+                                        .toArray(String[]::new)), shardCount));
+    }
+
+    private <T, F> BiFunction<T, Integer, String> getPartitionKeyValueGetter(F[] partitionKeyFields, String shardPrefix, BiFunction<T, F, String> fieldMapper) {
+        return (obj, shard) -> StringSerdeUtil.mergeStrings(Stream.concat(
+                        // First add all partition keys
+                        Arrays.stream(partitionKeyFields)
+                                .map(field -> fieldMapper.apply(obj, field)),
+                        // Then add shard key last
+                        shard == null ? Stream.of() : Stream.of(shardPrefix + "-" + shard))
+                .toArray(String[]::new));
+    }
+
     private <T> SchemaImpl<T> parseSchema(TableType type, long indexNumber, Class<T> objClazz) {
         DynamoTable[] dynamoTables = objClazz.getDeclaredAnnotationsByType(DynamoTable.class);
-        checkState(dynamoTables != null && dynamoTables.length > 0,
-                "Class " + objClazz + " is missing DynamoTable annotation");
+        checkState(dynamoTables.length > 0, "Class " + objClazz + " is missing DynamoTable annotation");
         DynamoTable dynamoTable = Arrays.stream(dynamoTables)
                 .filter(dt -> dt.type() == type)
                 .filter(dt -> dt.indexNumber() == indexNumber)
                 .findAny()
                 .orElseThrow(() -> new IllegalStateException("Class " + objClazz + " is missing table type " + type));
         String[] partitionKeys = dynamoTable.partitionKeys();
+        String[] shardKeys = dynamoTable.shardKeys();
+        int shardCount = dynamoTable.shardCount();
+        String shardPrefix = dynamoTable.shardPrefix();
         String[] rangeKeys = dynamoTable.rangeKeys();
         String rangePrefix = dynamoTable.rangePrefix();
         String tableName = getTableOrIndexName(type, indexNumber);
@@ -211,6 +262,7 @@ class DynamoMapperImpl implements DynamoMapper {
         ImmutableList.Builder<Function<Map<String, AttributeValue>, Object>> fromAttrMapToCtorArgsListBuilder = ImmutableList.builder();
         ImmutableMap.Builder<String, Function<T, Object>> objToFieldValsBuilder = ImmutableMap.builder();
         Field[] partitionKeyFields = new Field[partitionKeys.length];
+        Field[] shardKeyFields = new Field[shardKeys.length];
         Field[] rangeKeyFields = new Field[rangeKeys.length];
         ImmutableList.Builder<BiConsumer<Item, T>> toItemArgsBuilder = ImmutableList.builder();
         ImmutableList.Builder<BiConsumer<ImmutableMap.Builder<String, AttributeValue>, T>> toAttrMapArgsBuilder = ImmutableList.builder();
@@ -276,6 +328,11 @@ class DynamoMapperImpl implements DynamoMapper {
             for (int i = 0; i < partitionKeys.length; i++) {
                 if (fieldName.equals(partitionKeys[i])) {
                     partitionKeyFields[i] = field;
+                }
+            }
+            for (int i = 0; i < shardKeys.length; i++) {
+                if (fieldName.equals(shardKeys[i])) {
+                    shardKeyFields[i] = field;
                 }
             }
             for (int i = 0; i < rangeKeys.length; i++) {
@@ -355,26 +412,52 @@ class DynamoMapperImpl implements DynamoMapper {
                 .map(u -> u.apply(attrMap))
                 .toArray();
 
+        // partitionKeyValueGetters
+        Function<T, String> partitionKeyValueObjGetter = getPartitionKeyValueObjGetter(partitionKeyFields, shardKeyFields, shardCount, shardPrefix);
+        Function<Map<String, Object>, String> partitionKeyValueMapGetter = getPartitionKeyValueMapGetter(partitionKeys, shardKeys, shardCount, shardPrefix);
+        BiFunction<Map<String, Object>, Integer, String> partitionKeyValueMapShardGetter = getPartitionKeyValueGetter(partitionKeys, shardPrefix, this::mapMap);
+
         // toItem toAttrVal keys
         ImmutableMap<String, Function<T, Object>> objToFieldVals = objToFieldValsBuilder.build();
         ImmutableMap.Builder<String, Function<T, String>> toItemOtherKeysMapperBuilder = ImmutableMap.builder();
         for (DynamoTable dt : dynamoTables) {
+            // This is a great place to sanitize validity of a DynamoTable
+            // As we are iterating all the definitions given a class
+            checkState((dt.partitionKeys().length + dt.shardKeys().length) > 0,
+                    "Must supply partition keys and/or shard keys for class %s", objClazz);
+            checkState(dt.shardKeys().length == 0 || !dt.shardPrefix().isEmpty(),
+                    "Must supply shard prefix when using shard keys for class %s", objClazz);
+            checkState(dt.shardKeys().length == 0 || dt.rangeKeys().length > 0,
+                    "Must use range keys when using shard keys for class %s", objClazz);
+            checkState(dt.shardKeys().length == 0 || dt.shardCount() > 0,
+                    "Must supply shard count when using shard keys for class %s", objClazz);
+            checkState(dt.shardKeys().length > 0 || dt.shardCount() == -1,
+                    "Must leave shard count unset when not using shard keys for class %s", objClazz);
+            checkState(!Strings.isNullOrEmpty(dt.rangePrefix()) || rangeKeys.length > 0,
+                    "Must supply either list of range keys and/or a prefix for class %s", objClazz);
             if (dt.type() == dynamoTable.type() && dt.indexNumber() == dynamoTable.indexNumber()) {
                 continue;
             }
-            checkState(!Strings.isNullOrEmpty(dt.rangePrefix()) || rangeKeys.length > 0,
-                    "Must supply either list of range keys and/or a prefix for class %s", objClazz);
             if (dt.type() != Lsi) {
-                ImmutableList<Function<T, Object>> dtPartitionKeyMappers = Arrays.stream(dt.partitionKeys())
+                List<Function<T, String>> dtPartitionKeyMappers = Arrays.stream(dt.partitionKeys())
                         .map(objToFieldVals::get)
                         .map(Preconditions::checkNotNull)
-                        .collect(ImmutableList.toImmutableList());
+                        .map(fun -> (Function<T, String>) (T obj) -> gson.toJson(fun.apply(obj)))
+                        .collect(Collectors.toList());
+                List<Function<T, String>> dtShardKeyMappers = Arrays.stream(dt.shardKeys())
+                        .map(objToFieldVals::get)
+                        .map(Preconditions::checkNotNull)
+                        .map(fun -> (Function<T, String>) (T obj) -> gson.toJson(fun.apply(obj)))
+                        .collect(Collectors.toList());
+                Function<T, String> partitionKeyValueGetter = this.<T, Function<T, String>>getPartitionKeyValueGetter(
+                        dtPartitionKeyMappers.toArray(Function[]::new),
+                        dtShardKeyMappers.toArray(Function[]::new),
+                        shardCount,
+                        shardPrefix,
+                        (obj, mapper) -> mapper.apply(obj));
                 toItemOtherKeysMapperBuilder.put(
                         getPartitionKeyName(dt.type(), dt.indexNumber()),
-                        obj -> StringSerdeUtil.mergeStrings(dtPartitionKeyMappers.stream()
-                                .map(m -> m.apply(obj))
-                                .map(gson::toJson)
-                                .toArray(String[]::new)));
+                        partitionKeyValueGetter);
             }
             String dtRangePrefix = dt.rangePrefix();
             ImmutableList<Function<T, Object>> dtRangeKeyMappers = Arrays.stream(dt.rangeKeys())
@@ -389,23 +472,9 @@ class DynamoMapperImpl implements DynamoMapper {
                             .toArray(String[]::new)));
         }
         ImmutableMap<String, Function<T, String>> toItemOtherKeysMapper = toItemOtherKeysMapperBuilder.build();
-        Function<T, String> getPartitionKeyVal = obj -> StringSerdeUtil.mergeStrings(Arrays.stream(partitionKeyFields)
-                .map(f -> {
-                    try {
-                        return gson.toJson(checkNotNull(f.get(obj)));
-                    } catch (IllegalAccessException ex) {
-                        throw new RuntimeException(ex);
-                    }
-                })
-                .toArray(String[]::new));
+        Function<T, String> getPartitionKeyVal = partitionKeyValueObjGetter;
         Function<T, String> getRangeKeyVal = obj -> StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeyFields)
-                        .map(f -> {
-                            try {
-                                return gson.toJson(checkNotNull(f.get(obj)));
-                            } catch (IllegalAccessException ex) {
-                                throw new RuntimeException(ex);
-                            }
-                        }))
+                        .map(field -> fieldMap(obj, field)))
                 .toArray(String[]::new));
 
         // toItem
@@ -703,7 +772,10 @@ class DynamoMapperImpl implements DynamoMapper {
         };
 
         return new SchemaImpl<T>(
+                type,
                 partitionKeys,
+                shardKeys,
+                shardCount,
                 rangeKeys,
                 partitionKeyFields,
                 rangeKeyFields,
@@ -722,7 +794,10 @@ class DynamoMapperImpl implements DynamoMapper {
                 objCtor,
                 toItemMapper,
                 toAttrMapMapper,
-                expressionBuilderSupplier);
+                expressionBuilderSupplier,
+                partitionKeyValueObjGetter,
+                partitionKeyValueMapGetter,
+                partitionKeyValueMapShardGetter);
     }
 
     private <T> Constructor<T> findConstructor(Class<T> objectClazz, long argc) {
@@ -813,7 +888,10 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     public class SchemaImpl<T> implements TableSchema<T>, IndexSchema<T> {
+        private final TableType type;
         private final String[] partitionKeys;
+        private final String[] shardKeys;
+        private final int shardCount;
         private final String[] rangeKeys;
         private final Field[] partitionKeyFields;
         private final Field[] rangeKeyFields;
@@ -833,9 +911,15 @@ class DynamoMapperImpl implements DynamoMapper {
         private final Function<T, Item> toItemMapper;
         private final Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper;
         private final Supplier<ExpressionBuilder> expressionBuilderSupplier;
+        private final Function<T, String> partitionKeyValueObjGetter;
+        private final Function<Map<String, Object>, String> partitionKeyValueMapGetter;
+        private final BiFunction<Map<String, Object>, Integer, String> partitionKeyValueMapShardGetter;
 
         public SchemaImpl(
+                TableType type,
                 String[] partitionKeys,
+                String[] shardKeys,
+                int shardCount,
                 String[] rangeKeys,
                 Field[] partitionKeyFields,
                 Field[] rangeKeyFields,
@@ -853,8 +937,15 @@ class DynamoMapperImpl implements DynamoMapper {
                 Function<Map<String, AttributeValue>, Object[]> fromAttrMapToCtorArgs,
                 Constructor<T> objCtor, Function<T, Item> toItemMapper,
                 Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper,
-                Supplier<ExpressionBuilder> expressionBuilderSupplier) {
+                Supplier<ExpressionBuilder> expressionBuilderSupplier,
+                Function<T, String> partitionKeyValueObjGetter,
+                Function<Map<String, Object>,
+                        String> partitionKeyValueMapGetter,
+                BiFunction<Map<String, Object>, Integer, String> partitionKeyValueMapShardGetter) {
+            this.type = type;
             this.partitionKeys = partitionKeys;
+            this.shardKeys = shardKeys;
+            this.shardCount = shardCount;
             this.rangeKeys = rangeKeys;
             this.partitionKeyFields = partitionKeyFields;
             this.rangeKeyFields = rangeKeyFields;
@@ -874,6 +965,9 @@ class DynamoMapperImpl implements DynamoMapper {
             this.toItemMapper = toItemMapper;
             this.toAttrMapMapper = toAttrMapMapper;
             this.expressionBuilderSupplier = expressionBuilderSupplier;
+            this.partitionKeyValueObjGetter = partitionKeyValueObjGetter;
+            this.partitionKeyValueMapGetter = partitionKeyValueMapGetter;
+            this.partitionKeyValueMapShardGetter = partitionKeyValueMapShardGetter;
         }
 
         @Override
@@ -902,6 +996,16 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
+        public QueryApi queryApi() {
+            return Primary.equals(type) ? table() : index();
+        }
+
+        @Override
+        public ScanApi scanApi() {
+            return Primary.equals(type) ? table() : index();
+        }
+
+        @Override
         public PrimaryKey primaryKey(T obj) {
             return new PrimaryKey(partitionKey(obj), rangeKey(obj));
         }
@@ -912,9 +1016,7 @@ class DynamoMapperImpl implements DynamoMapper {
             return new PrimaryKey(
                     new KeyAttribute(
                             partitionKeyName,
-                            StringSerdeUtil.mergeStrings(Arrays.stream(partitionKeys)
-                                    .map(partitionKey -> gson.toJson(checkNotNull(values.get(partitionKey), "Partition key missing value for %s", partitionKey)))
-                                    .toArray(String[]::new))),
+                            partitionKeyValue(values)),
                     new KeyAttribute(
                             rangeKeyName,
                             StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeys)
@@ -929,29 +1031,40 @@ class DynamoMapperImpl implements DynamoMapper {
 
         @Override
         public KeyAttribute partitionKey(T obj) {
-            return new KeyAttribute(
-                    partitionKeyName,
-                    StringSerdeUtil.mergeStrings(Arrays.stream(partitionKeyFields)
-                            .map(partitionKeyField -> {
-                                try {
-                                    return gson.toJson(checkNotNull(partitionKeyField.get(obj),
-                                            "Partition key value null, should add @NonNull on all keys for class %s", obj));
-                                } catch (IllegalAccessException ex) {
-                                    throw new RuntimeException(ex);
-                                }
-                            })
-                            .toArray(String[]::new)));
+            return new KeyAttribute(partitionKeyName, partitionKeyValue(obj));
         }
 
         @Override
         public KeyAttribute partitionKey(Map<String, Object> values) {
-            String[] partitionValues = Arrays.stream(partitionKeys)
-                    .map(partitionKey -> gson.toJson(checkNotNull(values.get(partitionKey), "Partition key missing value for %s", partitionKey)))
-                    .toArray(String[]::new);
-            checkState(partitionValues.length == values.size(), "Unexpected extra values, partition keys %s values %s", rangeKeys, values);
             return new KeyAttribute(
                     partitionKeyName,
-                    StringSerdeUtil.mergeStrings(partitionValues));
+                    partitionKeyValue(values));
+        }
+
+        @Override
+        public KeyAttribute shardKey(int shard) {
+            checkArgument(partitionKeys.length > 0, "Partition keys are required, call shardKey(shard, values) instead");
+            return shardKey(shard, Map.of());
+        }
+
+        @Override
+        public KeyAttribute shardKey(int shard, Map<String, Object> values) {
+            checkArgument(shardKeys.length > 0, "Cannot construct a shard key for schema with no shardKeys defined");
+            checkArgument(shard >= 0, "Shard number " + shard + " cannot be negative");
+            checkArgument(shard < shardCount, "Shard number starts with zero and must be less than the maximum shard count of " + shardCount);
+            return new KeyAttribute(
+                    partitionKeyName,
+                    partitionKeyValueMapShardGetter.apply(values, shard));
+        }
+
+        @Override
+        public String partitionKeyValue(T obj) {
+            return partitionKeyValueObjGetter.apply(obj);
+        }
+
+        @Override
+        public String partitionKeyValue(Map<String, Object> values) {
+            return partitionKeyValueMapGetter.apply(values);
         }
 
         @Override
@@ -1080,6 +1193,11 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
+        public int shardCount() {
+            return shardCount;
+        }
+
+        @Override
         public String upsertExpression(T object, Map<String, String> nameMap, Map<String, Object> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression) {
             return upsertExpression(
                     object,
@@ -1124,9 +1242,62 @@ class DynamoMapperImpl implements DynamoMapper {
         public PrimaryKey toExclusiveStartKey(String serializedlastEvaluatedKey) {
             Map<String, String> attributes = gson.fromJson(serializedlastEvaluatedKey, new TypeToken<Map<String, String>>() {
             }.getType());
+            return toExclusiveStartKey(attributes);
+        }
+
+        private PrimaryKey toExclusiveStartKey(Map<String, String> attributes) {
             return new PrimaryKey(attributes.entrySet().stream()
                     .map(e -> new KeyAttribute(e.getKey(), e.getValue()))
                     .toArray(KeyAttribute[]::new));
         }
+
+        @Override
+        public String serializeShardedLastEvaluatedKey(Optional<Map<String, AttributeValue>> lastEvaluatedKeyOpt, int shard) {
+            return gson.toJson(new ShardAndAttributes(
+                    shard,
+                    lastEvaluatedKeyOpt
+                            .map(lastEvaluatedKey -> Maps.transformValues(lastEvaluatedKey, AttributeValue::getS))
+                            .orElse(null)));
+        }
+
+        @Override
+        public ShardAndExclusiveStartKey wrapShardedLastEvaluatedKey(Optional<Map<String, AttributeValue>> lastEvaluatedKeyOpt, int shard) {
+            return new ShardAndExclusiveStartKey(
+                    shard,
+                    lastEvaluatedKeyOpt
+                            .map(lastEvaluatedKey -> Maps.transformValues(lastEvaluatedKey, AttributeValue::getS))
+                            .map(this::toExclusiveStartKey));
+        }
+
+        @Override
+        public String serializeShardedLastEvaluatedKey(ShardAndExclusiveStartKey shardAndExclusiveStartKey) {
+            return gson.toJson(new ShardAndAttributes(
+                    shardAndExclusiveStartKey.getShard(),
+                    shardAndExclusiveStartKey.getExclusiveStartKey()
+                            .map(primaryKey -> primaryKey.getComponents().stream()
+                                    .collect(Collectors.toMap(
+                                            Attribute::getName,
+                                            // Keys must all be strings
+                                            keyAttribute -> (String) keyAttribute.getValue())))
+                            .orElse(null)));
+        }
+
+        @Override
+        public ShardAndExclusiveStartKey toShardedExclusiveStartKey(String serializedShardedLastEvaluatedKey) {
+            ShardAndAttributes shardAndAttributes = gson.fromJson(serializedShardedLastEvaluatedKey, ShardAndAttributes.class);
+            return new ShardAndExclusiveStartKey(
+                    shardAndAttributes.getShard(),
+                    Optional.ofNullable(shardAndAttributes.getPrimaryKeyAttributes()).map(this::toExclusiveStartKey));
+        }
+    }
+
+    @Value
+    private static class ShardAndAttributes {
+        @NonNull
+        @SerializedName("s")
+        int shard;
+
+        @SerializedName("d")
+        Map<String, String> primaryKeyAttributes;
     }
 }
