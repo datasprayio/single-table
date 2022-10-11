@@ -10,6 +10,8 @@ import com.google.gson.Gson;
 import lombok.Builder;
 import lombok.NonNull;
 
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 public class SingleTable implements DynamoMapper {
@@ -49,6 +51,14 @@ public class SingleTable implements DynamoMapper {
 
     public void retryUnprocessed(BatchWriteItemOutcome outcome) {
         util.retryUnprocessed(outcome);
+    }
+
+    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
+        return util.fetchShardNextPage(schema, cursorOpt, maxPageSize);
+    }
+
+    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
+        return util.fetchShardNextPage(schema, cursorOpt, maxPageSize, values);
     }
 
     public int deterministicPartition(String input, int partitionCount) {

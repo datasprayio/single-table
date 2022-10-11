@@ -11,8 +11,11 @@
         <processorPath useClasspath="false">
           <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.22/lombok-1.18.22.jar" />
         </processorPath>
-        <module name="dynamo-single-table-schema" />
+        <module name="single-table" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="dynamo-single-table-schema" target="11" />
+    </bytecodeTargetLevel>
   </component>
 </project>

@@ -164,11 +164,10 @@ public class DynamoMapperTest extends AbstractDynamoTest {
         assertEquals(data1, primary.fromItem(primary.table().getItem(primary.primaryKey(data1))));
         assertEquals(Optional.of(data1), StreamSupport.stream(gsi.index().query(gsi.partitionKey(data1)).pages().spliterator(), false).flatMap(p -> StreamSupport.stream(p.spliterator(), false)).map(gsi::fromItem).findAny());
 
-        DynamoUtil dynamoUtil = new DynamoUtil(dynamoDoc);
-        assertEquals(new ShardPageResult<>(ImmutableList.of(data1), Optional.empty()), dynamoUtil.fetchShardNextPage(primary, Optional.empty(), 2, Map.of("f2", data1.getF2())));
-        assertEquals(new ShardPageResult<>(ImmutableList.of(data3, data2, data1), Optional.empty()), dynamoUtil.fetchShardNextPage(gsi, Optional.empty(), 4));
-        assertEquals(new ShardPageResult<>(ImmutableList.of(data3, data2, data1), Optional.of("{\"s\":15,\"d\":{\"gsipk1\":\"shard-15\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"1-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"1-3\\\"\",\"pk\":\"\\\"1-2\\\":shard-6\"}}")), dynamoUtil.fetchShardNextPage(gsi, Optional.empty(), 3));
-        assertEquals(new ShardPageResult<>(ImmutableList.of(data3, data2), Optional.of("{\"s\":9,\"d\":{\"gsipk1\":\"shard-9\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"2-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"2-3\\\"\",\"pk\":\"\\\"2-2\\\":shard-1\"}}")), dynamoUtil.fetchShardNextPage(gsi, Optional.empty(), 2));
-        assertEquals(new ShardPageResult<>(ImmutableList.of(data1), Optional.empty()), dynamoUtil.fetchShardNextPage(gsi, Optional.of("{\"s\":9,\"d\":{\"gsipk1\":\"shard-9\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"2-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"2-3\\\"\",\"pk\":\"\\\"2-2\\\":shard-1\"}}"), 2));
+        assertEquals(new ShardPageResult<>(ImmutableList.of(data1), Optional.empty()), singleTable.fetchShardNextPage(primary, Optional.empty(), 2, Map.of("f2", data1.getF2())));
+        assertEquals(new ShardPageResult<>(ImmutableList.of(data3, data2, data1), Optional.empty()), singleTable.fetchShardNextPage(gsi, Optional.empty(), 4));
+        assertEquals(new ShardPageResult<>(ImmutableList.of(data3, data2, data1), Optional.of("{\"s\":15,\"d\":{\"gsipk1\":\"shard-15\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"1-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"1-3\\\"\",\"pk\":\"\\\"1-2\\\":shard-6\"}}")), singleTable.fetchShardNextPage(gsi, Optional.empty(), 3));
+        assertEquals(new ShardPageResult<>(ImmutableList.of(data3, data2), Optional.of("{\"s\":9,\"d\":{\"gsipk1\":\"shard-9\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"2-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"2-3\\\"\",\"pk\":\"\\\"2-2\\\":shard-1\"}}")), singleTable.fetchShardNextPage(gsi, Optional.empty(), 2));
+        assertEquals(new ShardPageResult<>(ImmutableList.of(data1), Optional.empty()), singleTable.fetchShardNextPage(gsi, Optional.of("{\"s\":9,\"d\":{\"gsipk1\":\"shard-9\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"2-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"2-3\\\"\",\"pk\":\"\\\"2-2\\\":shard-1\"}}"), 2));
     }
 }

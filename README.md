@@ -213,7 +213,7 @@ Cat otherCat = schema.fromItem(schema.table().getItem(
                 "catId", catId))));
 
 // Finally let's query some cats without an entire table scan
-ShardPageResult<Cat> result = dynamoUtil.fetchShardNextPage(
+ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
                 schema,
                 /* Pagination token */ Optional.empty(),
                 /* page size */ 100);
@@ -222,7 +222,7 @@ processCats(result.getItems());
 // Finally let's dump all our cats using pagination
 Optional<String> cursorOpt = Optional.empty();
 do {
-        ShardPageResult<Cat> result = dynamoUtil.fetchShardNextPage(
+        ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
                 schema,
                 cursorOpt,
                 /* page size */ 100);
