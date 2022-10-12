@@ -8,6 +8,7 @@ import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import com.amazonaws.services.dynamodbv2.document.Item;
 import com.amazonaws.services.dynamodbv2.document.Page;
 import com.amazonaws.services.dynamodbv2.document.QueryOutcome;
+import com.amazonaws.services.dynamodbv2.document.RangeKeyCondition;
 import com.amazonaws.services.dynamodbv2.document.spec.QuerySpec;
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
@@ -81,6 +82,7 @@ class DynamoUtil {
             int shard = shardAndExclusiveStartKeyOpt.map(ShardAndExclusiveStartKey::getShard).orElse(0);
             Page<Item, QueryOutcome> page = schema.queryApi().query(new QuerySpec()
                             .withHashKey(schema.shardKey(shard, values))
+                            .withRangeKeyCondition(new RangeKeyCondition(schema.rangeKeyName()).beginsWith(schema.rangeValuePartial(values)))
                             .withMaxPageSize(maxPageSize)
                             .withExclusiveStartKey(shardAndExclusiveStartKeyOpt
                                     .flatMap(ShardAndExclusiveStartKey::getExclusiveStartKey)
