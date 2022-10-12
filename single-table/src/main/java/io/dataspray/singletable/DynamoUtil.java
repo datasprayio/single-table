@@ -69,11 +69,11 @@ class DynamoUtil {
         }
     }
 
-    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
+    public <T> ShardPageResult<T> fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
         return fetchShardNextPage(schema, cursorOpt, maxPageSize, Map.of());
     }
 
-    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
+    public <T> ShardPageResult<T> fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
         checkArgument(maxPageSize > 0, "Max page size must be greater than zero");
         Optional<ShardAndExclusiveStartKey> shardAndExclusiveStartKeyOpt = cursorOpt.map(schema::toShardedExclusiveStartKey);
         ImmutableList.Builder<T> itemsBuilder = ImmutableList.builder();

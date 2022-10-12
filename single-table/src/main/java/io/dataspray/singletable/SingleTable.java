@@ -53,11 +53,11 @@ public class SingleTable implements DynamoMapper {
         util.retryUnprocessed(outcome);
     }
 
-    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
+    public <T> ShardPageResult<T> fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
         return util.fetchShardNextPage(schema, cursorOpt, maxPageSize);
     }
 
-    public <T> ShardPageResult fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
+    public <T> ShardPageResult<T> fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
         return util.fetchShardNextPage(schema, cursorOpt, maxPageSize, values);
     }
 
