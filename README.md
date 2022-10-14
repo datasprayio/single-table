@@ -1,4 +1,4 @@
-# Single Table - a DynamoDB tool
+# Single Table: a DynamoDB tool
 
 - Make single-table design easy and error-prone
 - Schema definition with serialization and deserialization
@@ -75,8 +75,8 @@ In our examples, we skip the steps of initializing `SingleTable` and parsing our
 SingleTable singleTable = SingleTable.builder()
         .dynamoDoc(dynamoDoc)
         .tablePrefix("project").build();
-TableSchema<Account> accountSchema=singleTable.parseTableSchema(Account.class);
-IndexSchema<Account> accountByApiKeySchema=singleTable.parseGlobalSecondaryIndexSchema(1,Account.class);
+TableSchema<Account> accountSchema = singleTable.parseTableSchema(Account.class);
+IndexSchema<Account> accountByApiKeySchema = singleTable.parseGlobalSecondaryIndexSchema(1,Account.class);
 ```
 
 ### Create our table
