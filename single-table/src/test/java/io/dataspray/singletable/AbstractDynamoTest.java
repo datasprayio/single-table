@@ -5,6 +5,7 @@ package io.dataspray.singletable;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import org.junit.Before;
+import software.amazon.awscdk.Stack;
 
 import java.util.UUID;
 
@@ -19,14 +20,14 @@ public class AbstractDynamoTest {
     @Before
     public void setupDynamoTest() {
         dynamo = new InMemoryDynamoDbProvider().get();
-        dynamoDoc = new DynamoDB(dynamo);
         singleTable = SingleTable.builder()
                 .tablePrefix(tablePrefix)
-                .dynamoDoc(dynamoDoc)
+                .overrideDynamo(dynamo)
                 .build();
         mapper = singleTable.mapper;
         util = singleTable.util;
 
         mapper.createTableIfNotExists(2, 2);
+        mapper.createCdkTable(new Stack(), "my-stack", 2, 2);
     }
 }

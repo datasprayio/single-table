@@ -2,67 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import com.amazonaws.services.dynamodbv2.document.Attribute;
-import com.amazonaws.services.dynamodbv2.document.DynamoDB;
-import com.amazonaws.services.dynamodbv2.document.Index;
-import com.amazonaws.services.dynamodbv2.document.Item;
-import com.amazonaws.services.dynamodbv2.document.KeyAttribute;
-import com.amazonaws.services.dynamodbv2.document.PrimaryKey;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.document.Table;
+import com.amazonaws.services.dynamodbv2.document.*;
 import com.amazonaws.services.dynamodbv2.document.api.QueryApi;
 import com.amazonaws.services.dynamodbv2.document.api.ScanApi;
-import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
-import com.amazonaws.services.dynamodbv2.model.AttributeValue;
-import com.amazonaws.services.dynamodbv2.model.BillingMode;
-import com.amazonaws.services.dynamodbv2.model.CreateTableRequest;
-import com.amazonaws.services.dynamodbv2.model.GlobalSecondaryIndex;
-import com.amazonaws.services.dynamodbv2.model.KeySchemaElement;
-import com.amazonaws.services.dynamodbv2.model.KeyType;
-import com.amazonaws.services.dynamodbv2.model.LocalSecondaryIndex;
-import com.amazonaws.services.dynamodbv2.model.Projection;
-import com.amazonaws.services.dynamodbv2.model.ProjectionType;
-import com.amazonaws.services.dynamodbv2.model.ResourceInUseException;
-import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
+import com.amazonaws.services.dynamodbv2.model.*;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import com.google.common.collect.*;
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
-import io.dataspray.singletable.DynamoConvertersProxy.CollectionMarshallerAttrVal;
-import io.dataspray.singletable.DynamoConvertersProxy.CollectionMarshallerItem;
-import io.dataspray.singletable.DynamoConvertersProxy.CollectionUnMarshallerAttrVal;
-import io.dataspray.singletable.DynamoConvertersProxy.CollectionUnMarshallerItem;
-import io.dataspray.singletable.DynamoConvertersProxy.Converters;
-import io.dataspray.singletable.DynamoConvertersProxy.DefaultInstanceGetter;
-import io.dataspray.singletable.DynamoConvertersProxy.MarshallerAttrVal;
-import io.dataspray.singletable.DynamoConvertersProxy.MarshallerItem;
-import io.dataspray.singletable.DynamoConvertersProxy.UnMarshallerAttrVal;
-import io.dataspray.singletable.DynamoConvertersProxy.UnMarshallerItem;
+import io.dataspray.singletable.DynamoConvertersProxy.*;
 import lombok.NonNull;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
+import software.amazon.awscdk.services.dynamodb.AttributeType;
+import software.amazon.awscdk.services.dynamodb.GlobalSecondaryIndexProps;
+import software.amazon.awscdk.services.dynamodb.LocalSecondaryIndexProps;
+import software.constructs.Construct;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.Parameter;
-import java.lang.reflect.ParameterizedType;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.lang.reflect.*;
+import java.util.*;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -78,6 +42,7 @@ import static io.dataspray.singletable.TableType.*;
 class DynamoMapperImpl implements DynamoMapper {
     private final String tablePrefix;
     private final Gson gson;
+    private final AmazonDynamoDB dynamo;
     private final DynamoDB dynamoDoc;
     private final Converters converters;
     private final MarshallerItem gsonMarshallerItem;
@@ -87,9 +52,10 @@ class DynamoMapperImpl implements DynamoMapper {
     @VisibleForTesting
     final Map<String, DynamoTable> rangePrefixToDynamoTable;
 
-    DynamoMapperImpl(String tablePrefix, Gson gson, DynamoDB dynamoDoc) {
+    DynamoMapperImpl(String tablePrefix, Gson gson, AmazonDynamoDB dynamo, DynamoDB dynamoDoc) {
         this.tablePrefix = tablePrefix;
         this.gson = gson;
+        this.dynamo = dynamo;
         this.dynamoDoc = dynamoDoc;
         this.converters = DynamoConvertersProxy.proxy();
         this.gsonMarshallerItem = (o, a, i) -> i.withString(a, gson.toJson(o));
@@ -100,8 +66,61 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     @Override
-    public boolean createTableIfNotExists(int lsiCount, int gsiCount) {
+    public software.amazon.awscdk.services.dynamodb.Table createCdkTable(Construct scope, String stackId, int lsiCount, int gsiCount) {
+        software.amazon.awscdk.services.dynamodb.Table table = software.amazon.awscdk.services.dynamodb.Table.Builder.create(scope, stackId + "-singletable-table")
+                .tableName(getTableOrIndexName(Primary, -1))
+                .partitionKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
+                        .name(getPartitionKeyName(Primary, -1)).type(AttributeType.STRING).build())
+                .sortKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
+                        .name(getRangeKeyName(Primary, -1)).type(AttributeType.STRING).build())
+                .billingMode(software.amazon.awscdk.services.dynamodb.BillingMode.PAY_PER_REQUEST)
+                .timeToLiveAttribute(SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME)
+                .build();
+
+        ImmutableList.builder();
+        LongStream.range(1, lsiCount + 1).forEach(indexNumber -> {
+            table.addLocalSecondaryIndex(LocalSecondaryIndexProps.builder()
+                    .indexName(getTableOrIndexName(Lsi, indexNumber))
+                    .projectionType(software.amazon.awscdk.services.dynamodb.ProjectionType.ALL)
+                    .sortKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
+                            .name(getRangeKeyName(Lsi, indexNumber))
+                            .type(AttributeType.STRING).build())
+                    .build());
+        });
+
+        LongStream.range(1, gsiCount + 1).forEach(indexNumber -> {
+            table.addGlobalSecondaryIndex(GlobalSecondaryIndexProps.builder()
+                    .indexName(getTableOrIndexName(Gsi, indexNumber))
+                    .projectionType(software.amazon.awscdk.services.dynamodb.ProjectionType.ALL)
+                    .partitionKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
+                            .name(getPartitionKeyName(Gsi, indexNumber))
+                            .type(AttributeType.STRING).build())
+                    .sortKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
+                            .name(getRangeKeyName(Gsi, indexNumber))
+                            .type(AttributeType.STRING).build())
+                    .build());
+        });
+
+        return table;
+    }
+
+    @Override
+    public void createTableIfNotExists(int lsiCount, int gsiCount) {
+        String tableName = getTableOrIndexName(Primary, -1);
+        boolean tableExists;
+        boolean tableTtlExists;
         try {
+            DescribeTimeToLiveResult timeToLiveResult = dynamo.describeTimeToLive(new DescribeTimeToLiveRequest()
+                    .withTableName(tableName));
+            tableExists = true;
+            tableTtlExists = (TimeToLiveStatus.ENABLED.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus())
+                    || TimeToLiveStatus.ENABLING.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus()))
+                    && SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME.equals(timeToLiveResult.getTimeToLiveDescription().getAttributeName());
+        } catch (ResourceNotFoundException ex) {
+            tableExists = false;
+            tableTtlExists = false;
+        }
+        if (!tableExists) {
             ArrayList<KeySchemaElement> primaryKeySchemas = Lists.newArrayList();
             ArrayList<AttributeDefinition> primaryAttributeDefinitions = Lists.newArrayList();
             ArrayList<LocalSecondaryIndex> localSecondaryIndexes = Lists.newArrayList();
@@ -134,7 +153,7 @@ class DynamoMapperImpl implements DynamoMapper {
             });
 
             CreateTableRequest createTableRequest = new CreateTableRequest()
-                    .withTableName(getTableOrIndexName(Primary, -1))
+                    .withTableName(tableName)
                     .withKeySchema(primaryKeySchemas)
                     .withAttributeDefinitions(primaryAttributeDefinitions)
                     .withBillingMode(BillingMode.PAY_PER_REQUEST);
@@ -145,11 +164,14 @@ class DynamoMapperImpl implements DynamoMapper {
                 createTableRequest.withGlobalSecondaryIndexes(globalSecondaryIndexes);
             }
             dynamoDoc.createTable(createTableRequest);
-            log.info("Table {} created", getTableOrIndexName(Primary, -1));
-            return true;
-        } catch (ResourceInUseException ex) {
-            log.trace("Table {} already exists", getTableOrIndexName(Primary, -1));
-            return false;
+            log.info("Table {} created", tableName);
+        }
+        if (!tableTtlExists) {
+            dynamo.updateTimeToLive(new UpdateTimeToLiveRequest()
+                    .withTableName(tableName)
+                    .withTimeToLiveSpecification(new TimeToLiveSpecification()
+                            .withEnabled(true)
+                            .withAttributeName(SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME)));
         }
     }
 
@@ -1167,7 +1189,8 @@ class DynamoMapperImpl implements DynamoMapper {
             Object[] args = fromItemToCtorArgs.apply(item);
             try {
                 return objCtor.newInstance(args);
-            } catch (InstantiationException | IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
+            } catch (InstantiationException | IllegalAccessException | IllegalArgumentException |
+                     InvocationTargetException ex) {
                 throw new RuntimeException("Failed to construct, item: " + item.toJSON() + " objCtor: " + objCtor + " args: " + Arrays.toString(args), ex);
             }
         }
@@ -1187,7 +1210,8 @@ class DynamoMapperImpl implements DynamoMapper {
             }
             try {
                 return objCtor.newInstance(fromAttrMapToCtorArgs.apply(attrMap));
-            } catch (InstantiationException | IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
+            } catch (InstantiationException | IllegalAccessException | IllegalArgumentException |
+                     InvocationTargetException ex) {
                 throw new RuntimeException(ex);
             }
         }

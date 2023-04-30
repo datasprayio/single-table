@@ -49,6 +49,10 @@
             <artifactId>aws-java-sdk-dynamodb</artifactId>
         </dependency>
         <dependency>
+            <groupId>software.amazon.awscdk</groupId>
+            <artifactId>aws-cdk-lib</artifactId>
+        </dependency>
+        <dependency>
             <groupId>commons-lang</groupId>
             <artifactId>commons-lang</artifactId>
         </dependency>

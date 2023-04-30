@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
 import com.amazonaws.services.dynamodbv2.document.BatchGetItemOutcome;
 import com.amazonaws.services.dynamodbv2.document.BatchWriteItemOutcome;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
@@ -9,25 +12,39 @@ import com.amazonaws.services.dynamodbv2.document.Item;
 import com.google.gson.Gson;
 import lombok.Builder;
 import lombok.NonNull;
+import software.amazon.awscdk.services.dynamodb.Table;
+import software.constructs.Construct;
 
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 public class SingleTable implements DynamoMapper {
+    public static final String TTL_IN_EPOCH_SEC_ATTR_NAME = "ttlInEpochSec";
+
     DynamoMapperImpl mapper;
     DynamoUtil util;
 
     @Builder
-    private SingleTable(@NonNull DynamoDB dynamoDoc, @NonNull String tablePrefix, Gson overrideGson) {
+    private SingleTable(AmazonDynamoDB overrideDynamo, @NonNull String tablePrefix, Gson overrideGson) {
+        overrideDynamo = overrideDynamo != null ? overrideDynamo
+                : AmazonDynamoDBClientBuilder.standard()
+                .withCredentials(DefaultAWSCredentialsProviderChain.getInstance())
+                .build();
+        DynamoDB dynamoDoc = new DynamoDB(overrideDynamo);
         Gson gson = overrideGson != null ? overrideGson : new Gson();
-        this.mapper = new DynamoMapperImpl(tablePrefix, gson, dynamoDoc);
+        this.mapper = new DynamoMapperImpl(tablePrefix, gson, overrideDynamo, dynamoDoc);
         this.util = new DynamoUtil(dynamoDoc);
     }
 
     @Override
-    public boolean createTableIfNotExists(int lsiCount, int gsiCount) {
-        return mapper.createTableIfNotExists(lsiCount, gsiCount);
+    public Table createCdkTable(Construct scope, String stackId, int lsiCount, int gsiCount) {
+        return mapper.createCdkTable(scope, stackId, lsiCount, gsiCount);
+    }
+
+    @Override
+    public void createTableIfNotExists(int lsiCount, int gsiCount) {
+        mapper.createTableIfNotExists(lsiCount, gsiCount);
     }
 
     @Override

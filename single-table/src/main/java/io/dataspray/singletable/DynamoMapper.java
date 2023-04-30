@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import software.amazon.awscdk.services.dynamodb.Table;
+import software.constructs.Construct;
+
 public interface DynamoMapper {
 
-    boolean createTableIfNotExists(int lsiCount, int gsiCount);
+    Table createCdkTable(Construct scope, String stackId, int lsiCount, int gsiCount);
+
+    void createTableIfNotExists(int lsiCount, int gsiCount);
 
     <T> TableSchema<T> parseTableSchema(Class<T> objClazz);
 

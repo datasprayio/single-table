@@ -81,6 +81,8 @@ IndexSchema<Account> accountByApiKeySchema = singleTable.parseGlobalSecondaryInd
 
 ### Create our table
 
+#### Via SDK
+
 Our library assumes the table is created with partition and range keys with particular names. (`pk`, `sk`, `pkgsi1`,
 ...) Use our tool to create a valid table.
 
@@ -89,6 +91,14 @@ your schemas. But don't worry you can always add more later.
 
 ```java
 singleTable.createTableIfNotExists(2, 2);
+```
+
+#### Via CDK
+
+Alternatively, you can create the DynamoDB table and all indexes via AWS CDK stack:
+
+```java
+singleTable.createCdkTable(this, "my-stack-name", 2, 2);
 ```
 
 ### Insert an item
