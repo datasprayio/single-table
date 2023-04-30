@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.dataspray</groupId>
         <artifactId>single-table-parent</artifactId>
-        <version>0.0.11</version>
+        <version>0.0.11-SNAPSHOT</version>
     </parent>
 
     <artifactId>single-table</artifactId>
