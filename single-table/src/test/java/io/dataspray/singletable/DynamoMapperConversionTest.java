@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import com.amazonaws.services.dynamodbv2.document.Item;
-import com.amazonaws.services.dynamodbv2.document.ItemUtils;
-import com.amazonaws.services.dynamodbv2.model.AttributeValue;
-import com.amazonaws.services.dynamodbv2.model.GetItemRequest;
-import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -21,18 +16,16 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 import static io.dataspray.singletable.TableType.Primary;
 import static org.junit.Assert.assertEquals;
@@ -131,71 +124,34 @@ public class DynamoMapperConversionTest extends AbstractDynamoTest {
 
     @Before
     public void setup() throws Exception {
+        log.info("Testing {} {}", fieldName, example);
         schema = mapper.parseTableSchema(Data.class);
     }
 
     @Test(timeout = 20_000L)
-    public void fromItemToItem() throws Exception {
-        Data dataExpected = getExpectedData();
-
-        Item itemExpected = schema.toItem(dataExpected);
-        schema.table().putItem(itemExpected);
-
-        Item itemActual = schema.table().getItem(schema.primaryKey(Map.of("id", dataExpected.getId())));
-        Data dataActual = schema.fromItem(itemActual);
-
-        assertEquals(dataExpected, dataActual);
-    }
-
-
-    @Test(timeout = 20_000L)
     public void fromAttrMapToAttrMap() throws Exception {
         Data dataExpected = getExpectedData();
+        log.info("dataExpected: {}", dataExpected);
 
-        ImmutableMap<String, AttributeValue> attrMapExpected = schema.toAttrMap(dataExpected);
-        dynamo.putItem(new PutItemRequest()
-                .withTableName(schema.tableName())
-                .withItem(attrMapExpected));
+        Map<String, AttributeValue> itemExpected = schema.toAttrMap(dataExpected);
+        log.info("itemExpected: {}", itemExpected);
+        client.putItem(PutItemRequest.builder()
+                .tableName(schema.tableName())
+                .item(itemExpected).build());
 
-        Map<String, AttributeValue> attrMapActual = dynamo.getItem(new GetItemRequest()
-                        .withTableName(schema.tableName())
-                        .withKey(ItemUtils.toAttributeValueMap(schema.primaryKey(Map.of("id", dataExpected.getId())))))
-                .getItem();
-        Data dataActual = schema.fromAttrMap(attrMapActual);
-
-        assertEquals(dataExpected, dataActual);
-    }
-
-
-    @Test(timeout = 20_000L)
-    public void fromItemToAttrMap() throws Exception {
-        Data dataExpected = getExpectedData();
-
-        Item itemExpected = schema.toItem(dataExpected);
-        schema.table().putItem(itemExpected);
-
-        Map<String, AttributeValue> attrMapActual = dynamo.getItem(new GetItemRequest()
-                        .withTableName(schema.tableName())
-                        .withKey(ItemUtils.toAttributeValueMap(schema.primaryKey(Map.of("id", dataExpected.getId())))))
-                .getItem();
-        Data dataActual = schema.fromAttrMap(attrMapActual);
+        Map<String, AttributeValue> itemActual = client.getItem(GetItemRequest.builder()
+                        .tableName(schema.tableName())
+                        .key(schema.primaryKey(Map.of("id", dataExpected.getId()))).build())
+                .item();
+        log.info("itemActual: {}", itemActual);
+        Data dataActual = schema.fromAttrMap(itemActual);
+        log.info("dataActual: {}", dataActual);
 
         assertEquals(dataExpected, dataActual);
-    }
 
-    @Test(timeout = 20_000L)
-    public void fromAttrMapToItem() throws Exception {
-        Data dataExpected = getExpectedData();
-
-        ImmutableMap<String, AttributeValue> attrMapExpected = schema.toAttrMap(dataExpected);
-        dynamo.putItem(new PutItemRequest()
-                .withTableName(schema.tableName())
-                .withItem(attrMapExpected));
-
-        Item itemActual = schema.table().getItem(schema.primaryKey(Map.of("id", dataExpected.getId())));
-        Data dataActual = schema.fromItem(itemActual);
-
-        assertEquals(dataExpected, dataActual);
+        // We cannot assertEquals(itemExpected, itemActual);
+        // This is because Dynamo doesn't preserve number fields as is:
+        // Float and Double supplied as "0.0" will be returned back as "0"
     }
 
     private Data getExpectedData() throws Exception {

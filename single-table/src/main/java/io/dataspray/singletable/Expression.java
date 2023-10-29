@@ -3,17 +3,23 @@
 package io.dataspray.singletable;
 
 import com.google.common.collect.ImmutableMap;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.util.Optional;
 
 public interface Expression {
+    UpdateItemRequest.Builder toUpdateItemRequestBuilder();
+
+    UpdateItemRequest.Builder toUpdateItemRequestBuilder(UpdateItemRequest.Builder builder);
+
     Optional<String> updateExpression();
 
     Optional<String> conditionExpression();
 
-    Optional<ImmutableMap<String, String>> nameMap();
+    Optional<ImmutableMap<String, String>> expressionAttributeNames();
 
-    Optional<ImmutableMap<String, Object>> valMap();
+    Optional<ImmutableMap<String, AttributeValue>> expressionAttributeValues();
 
     @Override
     String toString();

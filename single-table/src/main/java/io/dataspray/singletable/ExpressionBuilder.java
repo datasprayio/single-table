@@ -3,6 +3,7 @@
 package io.dataspray.singletable;
 
 import com.google.common.collect.ImmutableList;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
  * Update expression builder that ensures updated pk or sk keys are properly
@@ -11,7 +12,7 @@ import com.google.common.collect.ImmutableList;
 public interface ExpressionBuilder {
     ExpressionBuilder set(String fieldName, Object object);
 
-    ExpressionBuilder set(ImmutableList<String> fieldPath, Object object);
+    ExpressionBuilder set(ImmutableList<String> fieldPath, AttributeValue value);
 
     ExpressionBuilder setIncrement(String fieldName, Number increment);
 
@@ -21,7 +22,7 @@ public interface ExpressionBuilder {
 
     ExpressionBuilder add(String fieldName, Object object);
 
-    ExpressionBuilder add(ImmutableList<String> fieldPath, Object object);
+    ExpressionBuilder add(ImmutableList<String> fieldPath, AttributeValue value);
 
     ExpressionBuilder remove(String fieldName);
 
@@ -29,6 +30,8 @@ public interface ExpressionBuilder {
 
     ExpressionBuilder delete(String fieldName, Object object);
 
+
+    AttributeValue toAttrVal(String fieldName, Object object);
 
     String fieldMapping(String fieldName);
 
@@ -38,9 +41,14 @@ public interface ExpressionBuilder {
 
     String valueMapping(String fieldName, Object object);
 
-    String constantMapping(String fieldName, Object object);
+    /**
+     * Maps a constant such as 0 (zero) to a field.
+     *
+     * @return the name to be referenced in the expression
+     */
+    String constantMapping(String name, AttributeValue object);
 
-    String valueMapping(ImmutableList<String> fieldPath, Object object);
+    String constantMapping(ImmutableList<String> namePath, AttributeValue value);
 
 
     ExpressionBuilder condition(String expression);

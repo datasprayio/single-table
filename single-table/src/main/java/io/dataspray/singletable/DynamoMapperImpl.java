@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
-import com.amazonaws.services.dynamodbv2.document.Table;
-import com.amazonaws.services.dynamodbv2.document.*;
-import com.amazonaws.services.dynamodbv2.document.api.QueryApi;
-import com.amazonaws.services.dynamodbv2.document.api.ScanApi;
-import com.amazonaws.services.dynamodbv2.model.*;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
@@ -23,10 +17,13 @@ import lombok.extern.slf4j.Slf4j;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.GlobalSecondaryIndexProps;
 import software.amazon.awscdk.services.dynamodb.LocalSecondaryIndexProps;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
 import software.constructs.Construct;
 
 import java.lang.reflect.*;
 import java.util.*;
+import java.util.Map.Entry;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -42,26 +39,18 @@ import static io.dataspray.singletable.TableType.*;
 class DynamoMapperImpl implements DynamoMapper {
     private final String tablePrefix;
     private final Gson gson;
-    private final AmazonDynamoDB dynamo;
-    private final DynamoDB dynamoDoc;
     private final Converters converters;
-    private final MarshallerItem gsonMarshallerItem;
     private final MarshallerAttrVal gsonMarshallerAttrVal;
     private final Function<Class, UnMarshallerAttrVal> gsonUnMarshallerAttrVal;
-    private final Function<Class, UnMarshallerItem> gsonUnMarshallerItem;
     @VisibleForTesting
     final Map<String, DynamoTable> rangePrefixToDynamoTable;
 
-    DynamoMapperImpl(String tablePrefix, Gson gson, AmazonDynamoDB dynamo, DynamoDB dynamoDoc) {
+    DynamoMapperImpl(String tablePrefix, Gson gson) {
         this.tablePrefix = tablePrefix;
         this.gson = gson;
-        this.dynamo = dynamo;
-        this.dynamoDoc = dynamoDoc;
         this.converters = DynamoConvertersProxy.proxy();
-        this.gsonMarshallerItem = (o, a, i) -> i.withString(a, gson.toJson(o));
-        this.gsonMarshallerAttrVal = o -> new AttributeValue().withS(gson.toJson(o));
-        this.gsonUnMarshallerAttrVal = k -> a -> gson.fromJson(a.getS(), k);
-        this.gsonUnMarshallerItem = k -> (a, i) -> gson.fromJson(i.getString(a), k);
+        this.gsonMarshallerAttrVal = o -> AttributeValue.fromS(gson.toJson(o));
+        this.gsonUnMarshallerAttrVal = k -> a -> gson.fromJson(a.s(), k);
         this.rangePrefixToDynamoTable = Maps.newHashMap();
     }
 
@@ -105,17 +94,19 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     @Override
-    public void createTableIfNotExists(int lsiCount, int gsiCount) {
+    public void createTableIfNotExists(DynamoDbClient dynamo, int lsiCount, int gsiCount) {
         String tableName = getTableOrIndexName(Primary, -1);
         boolean tableExists;
         boolean tableTtlExists;
         try {
-            DescribeTimeToLiveResult timeToLiveResult = dynamo.describeTimeToLive(new DescribeTimeToLiveRequest()
-                    .withTableName(tableName));
+            TimeToLiveDescription desc = dynamo.describeTimeToLive(DescribeTimeToLiveRequest.builder()
+                            .tableName(tableName)
+                            .build())
+                    .timeToLiveDescription();
             tableExists = true;
-            tableTtlExists = (TimeToLiveStatus.ENABLED.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus())
-                    || TimeToLiveStatus.ENABLING.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus()))
-                    && SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME.equals(timeToLiveResult.getTimeToLiveDescription().getAttributeName());
+            tableTtlExists = (TimeToLiveStatus.ENABLED.equals(desc.timeToLiveStatus())
+                    || TimeToLiveStatus.ENABLING.equals(desc.timeToLiveStatus()))
+                    && SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME.equals(desc.attributeName());
         } catch (ResourceNotFoundException ex) {
             tableExists = false;
             tableTtlExists = false;
@@ -126,52 +117,79 @@ class DynamoMapperImpl implements DynamoMapper {
             ArrayList<LocalSecondaryIndex> localSecondaryIndexes = Lists.newArrayList();
             ArrayList<GlobalSecondaryIndex> globalSecondaryIndexes = Lists.newArrayList();
 
-            primaryKeySchemas.add(new KeySchemaElement(getPartitionKeyName(Primary, -1), KeyType.HASH));
-            primaryAttributeDefinitions.add(new AttributeDefinition(getPartitionKeyName(Primary, -1), ScalarAttributeType.S));
-            primaryKeySchemas.add(new KeySchemaElement(getRangeKeyName(Primary, -1), KeyType.RANGE));
-            primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Primary, -1), ScalarAttributeType.S));
+
+            primaryKeySchemas.add(KeySchemaElement.builder()
+                    .attributeName(getPartitionKeyName(Primary, -1))
+                    .keyType(KeyType.HASH).build());
+            primaryAttributeDefinitions.add(AttributeDefinition.builder()
+                    .attributeName(getPartitionKeyName(Primary, -1))
+                    .attributeType(ScalarAttributeType.S).build());
+            primaryKeySchemas.add(KeySchemaElement.builder()
+                    .attributeName(getRangeKeyName(Primary, -1))
+                    .keyType(KeyType.RANGE).build());
+            primaryAttributeDefinitions.add(AttributeDefinition.builder()
+                    .attributeName(getRangeKeyName(Primary, -1))
+                    .attributeType(ScalarAttributeType.S)
+                    .build());
 
             LongStream.range(1, lsiCount + 1).forEach(indexNumber -> {
-                localSecondaryIndexes.add(new LocalSecondaryIndex()
-                        .withIndexName(getTableOrIndexName(Lsi, indexNumber))
-                        .withProjection(new Projection().withProjectionType(ProjectionType.ALL))
-                        .withKeySchema(ImmutableList.of(
-                                new KeySchemaElement(getPartitionKeyName(Lsi, indexNumber), KeyType.HASH),
-                                new KeySchemaElement(getRangeKeyName(Lsi, indexNumber), KeyType.RANGE))));
-                primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Lsi, indexNumber), ScalarAttributeType.S));
+                localSecondaryIndexes.add(LocalSecondaryIndex.builder()
+                        .indexName(getTableOrIndexName(Lsi, indexNumber))
+                        .projection(Projection.builder()
+                                .projectionType(ProjectionType.ALL).build())
+                        .keySchema(ImmutableList.of(
+                                KeySchemaElement.builder()
+                                        .attributeName(getPartitionKeyName(Lsi, indexNumber))
+                                        .keyType(KeyType.HASH).build(),
+                                KeySchemaElement.builder()
+                                        .attributeName(getRangeKeyName(Lsi, indexNumber))
+                                        .keyType(KeyType.RANGE).build())).build());
+                primaryAttributeDefinitions.add(AttributeDefinition.builder()
+                        .attributeName(getRangeKeyName(Lsi, indexNumber))
+                        .attributeType(ScalarAttributeType.S).build());
             });
 
             LongStream.range(1, gsiCount + 1).forEach(indexNumber -> {
-                globalSecondaryIndexes.add(new GlobalSecondaryIndex()
-                        .withIndexName(getTableOrIndexName(Gsi, indexNumber))
-                        .withProjection(new Projection().withProjectionType(ProjectionType.ALL))
-                        .withKeySchema(ImmutableList.of(
-                                new KeySchemaElement(getPartitionKeyName(Gsi, indexNumber), KeyType.HASH),
-                                new KeySchemaElement(getRangeKeyName(Gsi, indexNumber), KeyType.RANGE))));
-                primaryAttributeDefinitions.add(new AttributeDefinition(getPartitionKeyName(Gsi, indexNumber), ScalarAttributeType.S));
-                primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Gsi, indexNumber), ScalarAttributeType.S));
+                globalSecondaryIndexes.add(GlobalSecondaryIndex.builder()
+                        .indexName(getTableOrIndexName(Gsi, indexNumber))
+                        .projection(Projection.builder()
+                                .projectionType(ProjectionType.ALL).build())
+                        .keySchema(ImmutableList.of(
+                                KeySchemaElement.builder()
+                                        .attributeName(getPartitionKeyName(Gsi, indexNumber))
+                                        .keyType(KeyType.HASH).build(),
+                                KeySchemaElement.builder()
+                                        .attributeName(getRangeKeyName(Gsi, indexNumber))
+                                        .keyType(KeyType.RANGE).build())).build());
+                primaryAttributeDefinitions.add(AttributeDefinition.builder()
+                        .attributeName(getPartitionKeyName(Gsi, indexNumber))
+                        .attributeType(ScalarAttributeType.S).build());
+                primaryAttributeDefinitions.add(AttributeDefinition.builder()
+                        .attributeName(getRangeKeyName(Gsi, indexNumber))
+                        .attributeType(ScalarAttributeType.S).build());
             });
 
-            CreateTableRequest createTableRequest = new CreateTableRequest()
-                    .withTableName(tableName)
-                    .withKeySchema(primaryKeySchemas)
-                    .withAttributeDefinitions(primaryAttributeDefinitions)
-                    .withBillingMode(BillingMode.PAY_PER_REQUEST);
+            CreateTableRequest.Builder createTableRequestBuilder = CreateTableRequest.builder()
+                    .tableName(tableName)
+                    .keySchema(primaryKeySchemas)
+                    .attributeDefinitions(primaryAttributeDefinitions)
+                    .billingMode(BillingMode.PAY_PER_REQUEST);
             if (!localSecondaryIndexes.isEmpty()) {
-                createTableRequest.withLocalSecondaryIndexes(localSecondaryIndexes);
+                createTableRequestBuilder.localSecondaryIndexes(localSecondaryIndexes);
             }
             if (!globalSecondaryIndexes.isEmpty()) {
-                createTableRequest.withGlobalSecondaryIndexes(globalSecondaryIndexes);
+                createTableRequestBuilder.globalSecondaryIndexes(globalSecondaryIndexes);
             }
-            dynamoDoc.createTable(createTableRequest);
+            dynamo.createTable(createTableRequestBuilder.build());
             log.info("Table {} created", tableName);
         }
         if (!tableTtlExists) {
-            dynamo.updateTimeToLive(new UpdateTimeToLiveRequest()
-                    .withTableName(tableName)
-                    .withTimeToLiveSpecification(new TimeToLiveSpecification()
-                            .withEnabled(true)
-                            .withAttributeName(SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME)));
+            dynamo.updateTimeToLive(UpdateTimeToLiveRequest.builder()
+                    .tableName(tableName)
+                    .timeToLiveSpecification(TimeToLiveSpecification.builder()
+                            .enabled(true)
+                            .attributeName(SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME).build()).build());
+            log.info("Table {} TTL set", tableName);
         }
     }
 
@@ -264,29 +282,21 @@ class DynamoMapperImpl implements DynamoMapper {
         String shardPrefix = dynamoTable.shardPrefix();
         String[] rangeKeys = dynamoTable.rangeKeys();
         String rangePrefix = dynamoTable.rangePrefix();
-        String tableName = getTableOrIndexName(type, indexNumber);
+        String tableName = getTableOrIndexName(Primary, indexNumber);
+        Optional<String> indexNameOpt = type == Primary ? Optional.empty() : Optional.of(getTableOrIndexName(type, indexNumber));
         String partitionKeyName = getPartitionKeyName(type, indexNumber);
         String rangeKeyName = getRangeKeyName(type, indexNumber);
 
         DynamoTable dynamoTableOther = rangePrefixToDynamoTable.putIfAbsent(rangePrefix, dynamoTable);
         checkState(dynamoTableOther == null || dynamoTableOther == dynamoTable, "Detected multiple schemas with same rangePrefix %s, one in %s and other in %s", rangePrefix, dynamoTable, dynamoTableOther);
 
-        Table table = dynamoDoc.getTable(getTableOrIndexName(Primary, -1));
-        Index index = type != Primary
-                ? table.getIndex(tableName)
-                : null;
-
-        ImmutableMap.Builder<String, MarshallerItem> fieldMarshallersBuilder = ImmutableMap.builder();
-        ImmutableMap.Builder<String, UnMarshallerItem> fieldUnMarshallersBuilder = ImmutableMap.builder();
         ImmutableMap.Builder<String, MarshallerAttrVal> fieldAttrMarshallersBuilder = ImmutableMap.builder();
         ImmutableMap.Builder<String, UnMarshallerAttrVal> fieldAttrUnMarshallersBuilder = ImmutableMap.builder();
-        ImmutableList.Builder<Function<Item, Object>> fromItemToCtorArgsListBuilder = ImmutableList.builder();
         ImmutableList.Builder<Function<Map<String, AttributeValue>, Object>> fromAttrMapToCtorArgsListBuilder = ImmutableList.builder();
         ImmutableMap.Builder<String, Function<T, Object>> objToFieldValsBuilder = ImmutableMap.builder();
         Field[] partitionKeyFields = new Field[partitionKeys.length];
         Field[] shardKeyFields = new Field[shardKeys.length];
         Field[] rangeKeyFields = new Field[rangeKeys.length];
-        ImmutableList.Builder<BiConsumer<Item, T>> toItemArgsBuilder = ImmutableList.builder();
         ImmutableList.Builder<BiConsumer<ImmutableMap.Builder<String, AttributeValue>, T>> toAttrMapArgsBuilder = ImmutableList.builder();
 
         long fieldsCount = 0;
@@ -330,18 +340,11 @@ class DynamoMapperImpl implements DynamoMapper {
             };
             objToFieldValsBuilder.put(fieldName, objToFieldVal);
 
-            // fromItem
-            UnMarshallerItem unMarshallerItem = findUnMarshallerItem(collectionClazz, fieldClazz);
-            fromItemToCtorArgsListBuilder.add((item) ->
-                    (!isSet && (!item.isPresent(fieldName) || item.isNull(fieldName)))
-                            ? defaultInstanceGetterOpt.map(DefaultInstanceGetter::getDefaultInstance).orElse(null)
-                            : unMarshallerItem.unmarshall(fieldName, item));
-
             // fromAttrMap
             UnMarshallerAttrVal unMarshallerAttrVal = findUnMarshallerAttrVal(collectionClazz, fieldClazz);
             fromAttrMapToCtorArgsListBuilder.add((attrMap) -> {
                 AttributeValue attrVal = attrMap.get(fieldName);
-                return (!isSet && (attrVal == null || attrVal.getNULL() == Boolean.TRUE))
+                return (!isSet && (attrVal == null || attrVal.nul() == Boolean.TRUE))
                         ? defaultInstanceGetterOpt.map(DefaultInstanceGetter::getDefaultInstance).orElse(null)
                         : unMarshallerAttrVal.unmarshall(attrVal);
             });
@@ -362,27 +365,6 @@ class DynamoMapperImpl implements DynamoMapper {
                     rangeKeyFields[i] = field;
                 }
             }
-
-            // toItem
-            MarshallerItem marshallerItem = findMarshallerItem(collectionClazz, fieldClazz);
-            toItemArgsBuilder.add((item, object) -> {
-                Object val = objToFieldVal.apply(object);
-                if (isSet && val == null) {
-                    log.info("Field {} in class {} missing @NonNull. All sets are required to be non null since" +
-                                    " empty set is not allowed by DynamoDB and there is no distinction between null and empty set.",
-                            fieldName, object.getClass().getSimpleName());
-                }
-                if (isString && val != null && ((String) val).isEmpty()) {
-                    log.info("Field {} in class {} set as empty string. All Strings are required to be either null or non empty since" +
-                                    " empty string is not allowed by DynamoDB and there is no distinction between null and empty string.",
-                            fieldName, object.getClass().getSimpleName());
-                    val = null;
-                }
-                if (val == null) {
-                    return; // Omit null
-                }
-                marshallerItem.marshall(val, fieldName, item);
-            });
 
             // toAttrVal
             MarshallerAttrVal marshallerAttrVal = findMarshallerAttrVal(collectionClazz, fieldClazz);
@@ -409,10 +391,6 @@ class DynamoMapperImpl implements DynamoMapper {
                 mapBuilder.put(fieldName, valMarsh);
             });
 
-            // toDynamoValue fromDynamoValue
-            fieldMarshallersBuilder.put(fieldName, marshallerItem);
-            fieldUnMarshallersBuilder.put(fieldName, unMarshallerItem);
-
             // toAttrValue fromAttrValue
             fieldAttrMarshallersBuilder.put(fieldName, marshallerAttrVal);
             fieldAttrUnMarshallersBuilder.put(fieldName, unMarshallerAttrVal);
@@ -421,12 +399,6 @@ class DynamoMapperImpl implements DynamoMapper {
         // fromItem fromAttrVal ctor
         Constructor<T> objCtor = findConstructor(objClazz, fieldsCount);
         objCtor.setAccessible(true);
-
-        // fromItem
-        ImmutableList<Function<Item, Object>> fromItemToCtorArgsList = fromItemToCtorArgsListBuilder.build();
-        Function<Item, Object[]> fromItemToCtorArgs = item -> fromItemToCtorArgsList.stream()
-                .map(u -> u.apply(item))
-                .toArray();
 
         // fromAttrMap
         ImmutableList<Function<Map<String, AttributeValue>, Object>> fromAttrMapToCtorArgsList = fromAttrMapToCtorArgsListBuilder.build();
@@ -457,6 +429,12 @@ class DynamoMapperImpl implements DynamoMapper {
                     "Must leave shard count unset when not using shard keys for class %s", objClazz);
             checkState(!Strings.isNullOrEmpty(dt.rangePrefix()) || rangeKeys.length > 0,
                     "Must supply either list of range keys and/or a prefix for class %s", objClazz);
+            String dtPartitionKeyName = getPartitionKeyName(dt.type(), dt.indexNumber());
+            checkState(!objToFieldVals.containsKey(dtPartitionKeyName),
+                    "Field name %s is reserved and cannot be used for class %s", dtPartitionKeyName, objClazz);
+            String dtRangeKeyName = getRangeKeyName(dt.type(), dt.indexNumber());
+            checkState(!objToFieldVals.containsKey(dtRangeKeyName),
+                    "Field name %s is reserved and cannot be used for class %s", dtRangeKeyName, objClazz);
             if (dt.type() == dynamoTable.type() && dt.indexNumber() == dynamoTable.indexNumber()) {
                 continue;
             }
@@ -478,16 +456,15 @@ class DynamoMapperImpl implements DynamoMapper {
                         shardPrefix,
                         (obj, mapper) -> mapper.apply(obj));
                 toItemOtherKeysMapperBuilder.put(
-                        getPartitionKeyName(dt.type(), dt.indexNumber()),
+                        dtPartitionKeyName,
                         partitionKeyValueGetter);
             }
             String dtRangePrefix = dt.rangePrefix();
             ImmutableList<Function<T, Object>> dtRangeKeyMappers = Arrays.stream(dt.rangeKeys())
-                    .map(objToFieldVals::get)
-                    .map(Preconditions::checkNotNull)
+                    .map(key -> checkNotNull(objToFieldVals.get(key), "Field does not exist: %s", key))
                     .collect(ImmutableList.toImmutableList());
             toItemOtherKeysMapperBuilder.put(
-                    getRangeKeyName(dt.type(), dt.indexNumber()),
+                    dtRangeKeyName,
                     obj -> StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(dtRangePrefix), dtRangeKeyMappers.stream()
                                     .map(m -> m.apply(obj))
                                     .map(gson::toJson))
@@ -499,33 +476,17 @@ class DynamoMapperImpl implements DynamoMapper {
                         .map(field -> fieldMap(obj, field)))
                 .toArray(String[]::new));
 
-        // toItem
-        ImmutableList<BiConsumer<Item, T>> toItemArgs = toItemArgsBuilder.build();
-        Function<T, Item> toItemMapper = obj -> {
-            Item item = new Item();
-            item.withPrimaryKey(partitionKeyName, getPartitionKeyVal.apply(obj),
-                    rangeKeyName, getRangeKeyVal.apply(obj));
-            toItemOtherKeysMapper.forEach(((keyName, objToKeyMapper) ->
-                    item.withString(keyName, objToKeyMapper.apply(obj))));
-            toItemArgs.forEach(m -> m.accept(item, obj));
-            return item;
-        };
-
         // toAttrMap
         ImmutableList<BiConsumer<ImmutableMap.Builder<String, AttributeValue>, T>> toAttrMapArgs = toAttrMapArgsBuilder.build();
         Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper = obj -> {
             ImmutableMap.Builder<String, AttributeValue> attrMapBuilder = ImmutableMap.builder();
-            attrMapBuilder.put(partitionKeyName, new AttributeValue(getPartitionKeyVal.apply(obj)));
-            attrMapBuilder.put(rangeKeyName, new AttributeValue(getRangeKeyVal.apply(obj)));
+            attrMapBuilder.put(partitionKeyName, AttributeValue.fromS(getPartitionKeyVal.apply(obj)));
+            attrMapBuilder.put(rangeKeyName, AttributeValue.fromS(getRangeKeyVal.apply(obj)));
             toItemOtherKeysMapper.forEach(((keyName, objToKeyMapper) ->
-                    attrMapBuilder.put(keyName, new AttributeValue(objToKeyMapper.apply(obj)))));
+                    attrMapBuilder.put(keyName, AttributeValue.fromS(objToKeyMapper.apply(obj)))));
             toAttrMapArgs.forEach(m -> m.accept(attrMapBuilder, obj));
             return attrMapBuilder.build();
         };
-
-        // toDynamoValue fromDynamoValue
-        ImmutableMap<String, MarshallerItem> fieldMarshallers = fieldMarshallersBuilder.build();
-        ImmutableMap<String, UnMarshallerItem> fieldUnMarshallers = fieldUnMarshallersBuilder.build();
 
         // toAttrValue fromAttrValue
         ImmutableMap<String, MarshallerAttrVal> fieldAttrMarshallers = fieldAttrMarshallersBuilder.build();
@@ -535,7 +496,7 @@ class DynamoMapperImpl implements DynamoMapper {
         Supplier<ExpressionBuilder> expressionBuilderSupplier = () -> new ExpressionBuilder() {
             private boolean built = false;
             private final Map<String, String> nameMap = Maps.newHashMap();
-            private final Map<String, Object> valMap = Maps.newHashMap();
+            private final Map<String, AttributeValue> valMap = Maps.newHashMap();
             private final Map<String, String> setUpdates = Maps.newHashMap();
             private final Map<String, String> removeUpdates = Maps.newHashMap();
             private final Map<String, String> addUpdates = Maps.newHashMap();
@@ -552,13 +513,13 @@ class DynamoMapperImpl implements DynamoMapper {
             }
 
             @Override
-            public ExpressionBuilder set(ImmutableList<String> fieldPath, Object object) {
+            public ExpressionBuilder set(ImmutableList<String> namePath, AttributeValue value) {
                 checkState(!built);
-                checkArgument(!fieldPath.isEmpty());
-                String fieldMapping = fieldMapping(fieldPath);
+                checkArgument(!namePath.isEmpty());
+                String fieldMapping = fieldMapping(namePath);
                 checkState(!addUpdates.containsKey(fieldMapping));
                 setUpdates.put(fieldMapping,
-                        fieldMapping + " = " + valueMapping(fieldPath, object));
+                        fieldMapping + " = " + constantMapping(namePath, value));
                 return this;
             }
 
@@ -569,7 +530,7 @@ class DynamoMapperImpl implements DynamoMapper {
                 setUpdates.put(fieldName, String.format("%s = if_not_exists(%s, %s) + %s",
                         fieldMapping(fieldName),
                         fieldMapping(fieldName),
-                        constantMapping("zero", 0L),
+                        constantMapping("zero", AttributeValue.fromN("0")),
                         valueMapping(fieldName, increment)));
                 return this;
             }
@@ -600,13 +561,13 @@ class DynamoMapperImpl implements DynamoMapper {
             }
 
             @Override
-            public ExpressionBuilder add(ImmutableList<String> fieldPath, Object object) {
+            public ExpressionBuilder add(ImmutableList<String> fieldPath, AttributeValue value) {
                 checkState(!built);
                 checkArgument(!fieldPath.isEmpty());
                 String fieldMapping = fieldMapping(fieldPath);
                 checkState(!addUpdates.containsKey(fieldMapping));
                 addUpdates.put(fieldMapping,
-                        fieldMapping + " " + valueMapping(fieldPath, object));
+                        fieldMapping + " " + constantMapping(fieldPath, value));
                 return this;
             }
 
@@ -638,6 +599,18 @@ class DynamoMapperImpl implements DynamoMapper {
             }
 
             @Override
+            public AttributeValue toAttrVal(String fieldName, Object object) {
+                if (object instanceof String) {
+                    // For partition range keys and strings in general, there is no marshaller
+                    return AttributeValue.fromS((String) object);
+                } else {
+                    return checkNotNull(fieldAttrMarshallers.get(fieldName),
+                            "Unknown field name %s", fieldName)
+                            .marshall(object);
+                }
+            }
+
+            @Override
             public String fieldMapping(String fieldName) {
                 checkState(!built);
                 String mappedName = "#" + sanitizeFieldMapping(fieldName);
@@ -663,32 +636,22 @@ class DynamoMapperImpl implements DynamoMapper {
             @Override
             public String valueMapping(String fieldName, Object object) {
                 checkState(!built);
-                Object val;
-                if (object instanceof String) {
-                    // For partition range keys and strings in general, there is no marshaller
-                    val = object;
-                } else {
-                    Item tempItem = new Item();
-                    checkNotNull(fieldMarshallers.get(fieldName), "Unknown field name %s", fieldName)
-                            .marshall(object, "tempAttr", tempItem);
-                    val = tempItem.get("tempAttr");
-                }
-                return constantMapping(fieldName, val);
+                return constantMapping(fieldName, toAttrVal(fieldName, object));
             }
 
             @Override
-            public String constantMapping(String fieldName, Object object) {
+            public String constantMapping(String name, AttributeValue value) {
                 checkState(!built);
-                String mappedName = ":" + sanitizeFieldMapping(fieldName);
-                valMap.put(mappedName, object);
+                String mappedName = ":" + sanitizeFieldMapping(name);
+                valMap.put(mappedName, value);
                 return mappedName;
             }
 
             @Override
-            public String valueMapping(ImmutableList<String> fieldPath, Object object) {
-                return constantMapping(fieldPath.stream()
+            public String constantMapping(ImmutableList<String> namePath, AttributeValue value) {
+                return constantMapping(namePath.stream()
                         .map(String::toLowerCase)
-                        .collect(Collectors.joining("X")), object);
+                        .collect(Collectors.joining("X")), value);
             }
 
             @Override
@@ -752,10 +715,25 @@ class DynamoMapperImpl implements DynamoMapper {
                 final Optional<String> updateOpt = Optional.ofNullable(Strings.emptyToNull(String.join(" ", updates)));
                 final Optional<String> conditionOpt = Optional.ofNullable(Strings.emptyToNull(String.join(" AND ", conditionExpressions)));
                 final Optional<ImmutableMap<String, String>> nameImmutableMapOpt = nameMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(nameMap));
-                final Optional<ImmutableMap<String, Object>> valImmutableMapOpt = valMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(valMap));
+                final Optional<ImmutableMap<String, AttributeValue>> valImmutableMapOpt = valMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(valMap));
                 log.trace("Built dynamo expression: update {} condition {} nameMap {} valKeys {}",
                         updateOpt, conditionOpt, nameImmutableMapOpt, valImmutableMapOpt.map(ImmutableMap::keySet));
                 return new Expression() {
+                    @Override
+                    public UpdateItemRequest.Builder toUpdateItemRequestBuilder() {
+                        return toUpdateItemRequestBuilder(UpdateItemRequest.builder());
+                    }
+
+                    @Override
+                    public UpdateItemRequest.Builder toUpdateItemRequestBuilder(UpdateItemRequest.Builder builder) {
+                        builder.tableName(tableName);
+                        updateExpression().ifPresent(builder::updateExpression);
+                        conditionExpression().ifPresent(builder::conditionExpression);
+                        expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
+                        expressionAttributeValues().ifPresent(builder::expressionAttributeValues);
+                        return builder;
+                    }
+
                     @Override
                     public Optional<String> updateExpression() {
                         return updateOpt;
@@ -767,12 +745,12 @@ class DynamoMapperImpl implements DynamoMapper {
                     }
 
                     @Override
-                    public Optional<ImmutableMap<String, String>> nameMap() {
+                    public Optional<ImmutableMap<String, String>> expressionAttributeNames() {
                         return nameImmutableMapOpt;
                     }
 
                     @Override
-                    public Optional<ImmutableMap<String, Object>> valMap() {
+                    public Optional<ImmutableMap<String, AttributeValue>> expressionAttributeValues() {
                         return valImmutableMapOpt;
                     }
 
@@ -781,8 +759,8 @@ class DynamoMapperImpl implements DynamoMapper {
                         return MoreObjects.toStringHelper(this)
                                 .add("updateExpression", this.updateExpression())
                                 .add("conditionExpression", this.conditionExpression())
-                                .add("nameMap", this.nameMap())
-                                .add("valMap", this.valMap())
+                                .add("nameMap", this.expressionAttributeNames())
+                                .add("valMap", this.expressionAttributeValues())
                                 .toString();
                     }
                 };
@@ -803,18 +781,13 @@ class DynamoMapperImpl implements DynamoMapper {
                 rangeKeyFields,
                 rangePrefix,
                 tableName,
+                indexNameOpt,
                 partitionKeyName,
                 rangeKeyName,
-                table,
-                index,
-                fieldMarshallers,
-                fieldUnMarshallers,
                 fieldAttrMarshallers,
                 fieldAttrUnMarshallers,
-                fromItemToCtorArgs,
                 fromAttrMapToCtorArgs,
                 objCtor,
-                toItemMapper,
                 toAttrMapMapper,
                 expressionBuilderSupplier,
                 partitionKeyValueObjGetter,
@@ -860,30 +833,10 @@ class DynamoMapperImpl implements DynamoMapper {
         }
     }
 
-    private MarshallerItem findMarshallerItem(Optional<Class> collectionClazz, Class itemClazz) {
-        MarshallerItem f = findInClassSet(itemClazz, converters.mip).orElse(gsonMarshallerItem);
-        if (collectionClazz.isPresent()) {
-            CollectionMarshallerItem fc = findInClassSet(collectionClazz.get(), converters.mic).get();
-            return (o, a, i) -> fc.marshall(o, a, i, f);
-        } else {
-            return f;
-        }
-    }
-
-    private UnMarshallerItem findUnMarshallerItem(Optional<Class> collectionClazz, Class itemClazz) {
-        UnMarshallerItem f = findInClassSet(itemClazz, converters.uip).orElseGet(() -> gsonUnMarshallerItem.apply(itemClazz));
-        if (collectionClazz.isPresent()) {
-            CollectionUnMarshallerItem fc = findInClassSet(collectionClazz.get(), converters.uic).get();
-            return (a, i) -> fc.unmarshall(a, i, f);
-        } else {
-            return f;
-        }
-    }
-
     private MarshallerAttrVal findMarshallerAttrVal(Optional<Class> collectionClazz, Class itemClazz) {
-        MarshallerAttrVal f = findInClassSet(itemClazz, converters.map).orElse(gsonMarshallerAttrVal);
+        MarshallerAttrVal f = findInClassSet(itemClazz, converters.mp).orElse(gsonMarshallerAttrVal);
         if (collectionClazz.isPresent()) {
-            CollectionMarshallerAttrVal fc = findInClassSet(collectionClazz.get(), converters.mac).get();
+            CollectionMarshallerAttrVal fc = findInClassSet(collectionClazz.get(), converters.mc).get();
             return o -> fc.marshall(o, f);
         } else {
             return f;
@@ -891,17 +844,17 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     private UnMarshallerAttrVal findUnMarshallerAttrVal(Optional<Class> collectionClazz, Class itemClazz) {
-        UnMarshallerAttrVal f = findInClassSet(itemClazz, converters.uap).orElseGet(() -> gsonUnMarshallerAttrVal.apply(itemClazz));
+        UnMarshallerAttrVal f = findInClassSet(itemClazz, converters.up).orElseGet(() -> gsonUnMarshallerAttrVal.apply(itemClazz));
         if (collectionClazz.isPresent()) {
-            CollectionUnMarshallerAttrVal fc = findInClassSet(collectionClazz.get(), converters.uac).get();
+            CollectionUnMarshallerAttrVal fc = findInClassSet(collectionClazz.get(), converters.uc).get();
             return a -> fc.unmarshall(a, f);
         } else {
             return f;
         }
     }
 
-    private <T> Optional<T> findInClassSet(Class clazz, ImmutableSet<Map.Entry<Class<?>, T>> set) {
-        for (Map.Entry<Class<?>, T> entry : set) {
+    private <T> Optional<T> findInClassSet(Class clazz, ImmutableSet<Entry<Class<?>, T>> set) {
+        for (Entry<Class<?>, T> entry : set) {
             if (entry.getKey().isAssignableFrom(clazz)) {
                 return Optional.of(entry.getValue());
             }
@@ -919,18 +872,13 @@ class DynamoMapperImpl implements DynamoMapper {
         private final Field[] rangeKeyFields;
         private final String rangePrefix;
         private final String tableName;
+        private final Optional<String> indexNameOpt;
         private final String partitionKeyName;
         private final String rangeKeyName;
-        private final Table table;
-        private final Index index;
-        private final ImmutableMap<String, MarshallerItem> fieldMarshallers;
-        private final ImmutableMap<String, UnMarshallerItem> fieldUnMarshallers;
         private final ImmutableMap<String, MarshallerAttrVal> fieldAttrMarshallers;
         private final ImmutableMap<String, UnMarshallerAttrVal> fieldAttrUnMarshallers;
-        private final Function<Item, Object[]> fromItemToCtorArgs;
         private final Function<Map<String, AttributeValue>, Object[]> fromAttrMapToCtorArgs;
         private final Constructor<T> objCtor;
-        private final Function<T, Item> toItemMapper;
         private final Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper;
         private final Supplier<ExpressionBuilder> expressionBuilderSupplier;
         private final Function<T, String> partitionKeyValueObjGetter;
@@ -947,17 +895,13 @@ class DynamoMapperImpl implements DynamoMapper {
                 Field[] rangeKeyFields,
                 String rangePrefix,
                 String tableName,
+                Optional<String> indexNameOpt,
                 String partitionKeyName,
                 String rangeKeyName,
-                Table table,
-                Index index,
-                ImmutableMap<String, MarshallerItem> fieldMarshallers,
-                ImmutableMap<String, UnMarshallerItem> fieldUnMarshallers,
                 ImmutableMap<String, MarshallerAttrVal> fieldAttrMarshallers,
                 ImmutableMap<String, UnMarshallerAttrVal> fieldAttrUnMarshallers,
-                Function<Item, Object[]> fromItemToCtorArgs,
                 Function<Map<String, AttributeValue>, Object[]> fromAttrMapToCtorArgs,
-                Constructor<T> objCtor, Function<T, Item> toItemMapper,
+                Constructor<T> objCtor,
                 Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper,
                 Supplier<ExpressionBuilder> expressionBuilderSupplier,
                 Function<T, String> partitionKeyValueObjGetter,
@@ -973,18 +917,13 @@ class DynamoMapperImpl implements DynamoMapper {
             this.rangeKeyFields = rangeKeyFields;
             this.rangePrefix = rangePrefix;
             this.tableName = tableName;
+            this.indexNameOpt = indexNameOpt;
             this.partitionKeyName = partitionKeyName;
             this.rangeKeyName = rangeKeyName;
-            this.table = table;
-            this.index = index;
-            this.fieldMarshallers = fieldMarshallers;
-            this.fieldUnMarshallers = fieldUnMarshallers;
             this.fieldAttrMarshallers = fieldAttrMarshallers;
             this.fieldAttrUnMarshallers = fieldAttrUnMarshallers;
-            this.fromItemToCtorArgs = fromItemToCtorArgs;
             this.fromAttrMapToCtorArgs = fromAttrMapToCtorArgs;
             this.objCtor = objCtor;
-            this.toItemMapper = toItemMapper;
             this.toAttrMapMapper = toAttrMapMapper;
             this.expressionBuilderSupplier = expressionBuilderSupplier;
             this.partitionKeyValueObjGetter = partitionKeyValueObjGetter;
@@ -998,8 +937,13 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
-        public Table table() {
-            return table;
+        public Optional<String> indexNameOpt() {
+            return indexNameOpt;
+        }
+
+        @Override
+        public String indexName() {
+            return indexNameOpt.orElseThrow();
         }
 
         @Override
@@ -1008,42 +952,18 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
-        public String indexName() {
-            return tableName;
+        public Map<String, AttributeValue> primaryKey(T obj) {
+            return Map.ofEntries(
+                    partitionKey(obj),
+                    rangeKey(obj));
         }
 
         @Override
-        public Index index() {
-            return index;
-        }
-
-        @Override
-        public QueryApi queryApi() {
-            return Primary.equals(type) ? table() : index();
-        }
-
-        @Override
-        public ScanApi scanApi() {
-            return Primary.equals(type) ? table() : index();
-        }
-
-        @Override
-        public PrimaryKey primaryKey(T obj) {
-            return new PrimaryKey(partitionKey(obj), rangeKey(obj));
-        }
-
-        @Override
-        public PrimaryKey primaryKey(Map<String, Object> values) {
+        public Map<String, AttributeValue> primaryKey(Map<String, Object> values) {
             checkState(partitionKeys.length + rangeKeys.length >= values.size(), "Unexpected extra values, partition keys %s range keys %s values %s", partitionKeys, rangeKeys, values);
-            return new PrimaryKey(
-                    new KeyAttribute(
-                            partitionKeyName,
-                            partitionKeyValue(values)),
-                    new KeyAttribute(
-                            rangeKeyName,
-                            StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeys)
-                                            .map(rangeKey -> gson.toJson(checkNotNull(values.get(rangeKey), "Range key missing value for %s", rangeKey))))
-                                    .toArray(String[]::new))));
+            return Map.ofEntries(
+                    partitionKey(values),
+                    rangeKey(values, false));
         }
 
         @Override
@@ -1052,31 +972,44 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
-        public KeyAttribute partitionKey(T obj) {
-            return new KeyAttribute(partitionKeyName, partitionKeyValue(obj));
+        public Entry<String, AttributeValue> partitionKey(T obj) {
+            return Maps.immutableEntry(partitionKeyName, AttributeValue.builder()
+                    .s(partitionKeyValue(obj)).build());
         }
 
         @Override
-        public KeyAttribute partitionKey(Map<String, Object> values) {
-            return new KeyAttribute(
-                    partitionKeyName,
-                    partitionKeyValue(values));
+        public Entry<String, AttributeValue> partitionKey(Map<String, Object> values) {
+            return Maps.immutableEntry(partitionKeyName, AttributeValue.builder()
+                    .s(partitionKeyValue(values)).build());
         }
 
         @Override
-        public KeyAttribute shardKey(int shard) {
+        public Map<String, Condition> attrMapToConditions(Entry<String, AttributeValue> attrEntry) {
+            return attrMapToConditions(Map.ofEntries(attrEntry));
+        }
+
+        @Override
+        public Map<String, Condition> attrMapToConditions(Map<String, AttributeValue> attrMap) {
+            return Maps.transformValues(attrMap, attrVal -> Condition.builder()
+                    .comparisonOperator(ComparisonOperator.EQ)
+                    .attributeValueList(attrVal)
+                    .build());
+        }
+
+        @Override
+        public Entry<String, AttributeValue> shardKey(int shard) {
             checkArgument(partitionKeys.length > 0, "Partition keys are required, call shardKey(shard, values) instead");
             return shardKey(shard, Map.of());
         }
 
         @Override
-        public KeyAttribute shardKey(int shard, Map<String, Object> values) {
+        public Entry<String, AttributeValue> shardKey(int shard, Map<String, Object> values) {
             checkArgument(shardKeys.length > 0, "Cannot construct a shard key for schema with no shardKeys defined");
             checkArgument(shard >= 0, "Shard number " + shard + " cannot be negative");
             checkArgument(shard < shardCount, "Shard number starts with zero and must be less than the maximum shard count of " + shardCount);
-            return new KeyAttribute(
+            return Maps.immutableEntry(
                     partitionKeyName,
-                    partitionKeyValueMapShardGetter.apply(values, shard));
+                    AttributeValue.fromS(partitionKeyValueMapShardGetter.apply(values, shard)));
         }
 
         @Override
@@ -1095,10 +1028,10 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
-        public KeyAttribute rangeKey(T obj) {
-            return new KeyAttribute(
+        public Entry<String, AttributeValue> rangeKey(T obj) {
+            return Maps.immutableEntry(
                     rangeKeyName,
-                    StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeyFields)
+                    AttributeValue.fromS(StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeyFields)
                                     .map(rangeKeyField -> {
                                         try {
                                             return gson.toJson(checkNotNull(rangeKeyField.get(obj),
@@ -1107,28 +1040,29 @@ class DynamoMapperImpl implements DynamoMapper {
                                             throw new RuntimeException(ex);
                                         }
                                     }))
-                            .toArray(String[]::new)));
+                            .toArray(String[]::new))));
         }
 
         @Override
-        public KeyAttribute rangeKey(Map<String, Object> values) {
+        public Entry<String, AttributeValue> rangeKey(Map<String, Object> values) {
             checkState(rangeKeys.length == values.size(), "Unexpected extra values, range keys %s values %s", rangeKeys, values);
-            return new KeyAttribute(
+            return rangeKey(values, true);
+        }
+
+        private Entry<String, AttributeValue> rangeKey(Map<String, Object> values, boolean check) {
+            checkState(!check || rangeKeys.length == values.size(), "Unexpected extra values, range keys %s values %s", rangeKeys, values);
+            return Maps.immutableEntry(
                     rangeKeyName,
-                    StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeys)
+                    AttributeValue.fromS(StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeys)
                                     .map(rangeKey -> gson.toJson(checkNotNull(values.get(rangeKey), "Range key missing value for %s", rangeKey))))
-                            .toArray(String[]::new)));
+                            .toArray(String[]::new))));
         }
 
         @Override
-        public KeyAttribute rangeKeyPartial(Map<String, Object> values) {
-            return new KeyAttribute(
+        public Entry<String, AttributeValue> rangeKeyPartial(Map<String, Object> values) {
+            return Maps.immutableEntry(
                     rangeKeyName,
-                    StringSerdeUtil.mergeStrings(Stream.concat(Stream.of(rangePrefix), Arrays.stream(rangeKeys)
-                                    .map(values::get)
-                                    .takeWhile(Objects::nonNull)
-                                    .map(gson::toJson))
-                            .toArray(String[]::new)));
+                    AttributeValue.fromS(rangeValuePartial(values)));
         }
 
         @Override
@@ -1138,28 +1072,6 @@ class DynamoMapperImpl implements DynamoMapper {
                             .takeWhile(Objects::nonNull)
                             .map(gson::toJson))
                     .toArray(String[]::new));
-        }
-
-        @Override
-        public Object toDynamoValue(String fieldName, Object object) {
-            if (object == null) {
-                return null;
-            }
-            Item tempItem = new Item();
-            checkNotNull(fieldMarshallers.get(fieldName), "Unknown field name %s", fieldName)
-                    .marshall(object, "tempAttr", tempItem);
-            return tempItem.get("tempAttr");
-        }
-
-        @Override
-        public Object fromDynamoValue(String fieldName, Object object) {
-            if (object == null) {
-                return null;
-            }
-            Item tempItem = new Item();
-            tempItem.with("tempAttr", object);
-            return checkNotNull(fieldUnMarshallers.get(fieldName), "Unknown field name %s", fieldName)
-                    .unmarshall("tempAttr", tempItem);
         }
 
         @Override
@@ -1173,29 +1085,6 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
-        public Item toItem(T object) {
-            if (object == null) {
-                return null;
-            }
-            return toItemMapper.apply(object);
-        }
-
-        @Override
-        public T fromItem(Item item) {
-            // TODO check consistency of returning values. prevent user from updating fields that are also pk or sk in GSI or LSI
-            if (item == null) {
-                return null;
-            }
-            Object[] args = fromItemToCtorArgs.apply(item);
-            try {
-                return objCtor.newInstance(args);
-            } catch (InstantiationException | IllegalAccessException | IllegalArgumentException |
-                     InvocationTargetException ex) {
-                throw new RuntimeException("Failed to construct, item: " + item.toJSON() + " objCtor: " + objCtor + " args: " + Arrays.toString(args), ex);
-            }
-        }
-
-        @Override
         public ImmutableMap<String, AttributeValue> toAttrMap(T object) {
             if (object == null) {
                 return null;
@@ -1205,7 +1094,7 @@ class DynamoMapperImpl implements DynamoMapper {
 
         @Override
         public T fromAttrMap(Map<String, AttributeValue> attrMap) {
-            if (attrMap == null) {
+            if (attrMap == null || attrMap.isEmpty()) {
                 return null;
             }
             try {
@@ -1222,57 +1111,39 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
-        public String upsertExpression(T object, Map<String, String> nameMap, Map<String, Object> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression) {
-            return upsertExpression(
-                    object,
-                    nameMap,
-                    (key, val) -> valMap.put(":" + key, val),
-                    skipFieldNames,
-                    additionalExpression);
-        }
-
-        @Override
-        public String upsertExpressionAttrVal(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression) {
-            return upsertExpression(
-                    object,
-                    nameMap,
-                    (key, val) -> valMap.put(":" + key, toAttrValue(key, val)),
-                    skipFieldNames,
-                    additionalExpression);
-        }
-
-        private String upsertExpression(T object, Map<String, String> nameMap, BiConsumer<String, Object> valMapPutter, ImmutableSet<String> skipFieldNames, String additionalExpression) {
+        public String upsertExpression(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression) {
             List<String> setUpdates = Lists.newArrayList();
-            toItemMapper.apply(object).attributes().forEach(entry -> {
-                if (partitionKeyName.equals(entry.getKey()) || rangeKeyName.equals(entry.getKey())) {
+            toAttrMapMapper.apply(object).forEach((key, value) -> {
+                if (partitionKeyName.equals(key) || rangeKeyName.equals(key)) {
                     return;
                 }
-                if (skipFieldNames.contains(entry.getKey())) {
+                if (skipFieldNames.contains(key)) {
                     return;
                 }
-                nameMap.put("#" + entry.getKey(), entry.getKey());
-                valMapPutter.accept(entry.getKey(), entry.getValue());
-                setUpdates.add("#" + entry.getKey() + " = " + ":" + entry.getKey());
+                nameMap.put("#" + key, key);
+                valMap.put(":" + key, value);
+                setUpdates.add("#" + key + " = " + ":" + key);
             });
             return "SET " + String.join(", ", setUpdates) + additionalExpression;
         }
 
         @Override
-        public String serializeLastEvaluatedKey(Map<String, AttributeValue> lastEvaluatedKey) {
-            return gson.toJson(Maps.transformValues(lastEvaluatedKey, AttributeValue::getS));
+        public Optional<String> serializeLastEvaluatedKey(Map<String, AttributeValue> lastEvaluatedKey) {
+            if (lastEvaluatedKey.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.of(gson.toJson(Maps.transformValues(lastEvaluatedKey, AttributeValue::s)));
         }
 
         @Override
-        public PrimaryKey toExclusiveStartKey(String serializedlastEvaluatedKey) {
+        public Map<String, AttributeValue> toExclusiveStartKey(String serializedlastEvaluatedKey) {
             Map<String, String> attributes = gson.fromJson(serializedlastEvaluatedKey, new TypeToken<Map<String, String>>() {
             }.getType());
             return toExclusiveStartKey(attributes);
         }
 
-        private PrimaryKey toExclusiveStartKey(Map<String, String> attributes) {
-            return new PrimaryKey(attributes.entrySet().stream()
-                    .map(e -> new KeyAttribute(e.getKey(), e.getValue()))
-                    .toArray(KeyAttribute[]::new));
+        private Map<String, AttributeValue> toExclusiveStartKey(Map<String, String> attributes) {
+            return Maps.transformValues(attributes, AttributeValue::fromS);
         }
 
         @Override
@@ -1280,7 +1151,7 @@ class DynamoMapperImpl implements DynamoMapper {
             return gson.toJson(new ShardAndAttributes(
                     shard,
                     lastEvaluatedKeyOpt
-                            .map(lastEvaluatedKey -> Maps.transformValues(lastEvaluatedKey, AttributeValue::getS))
+                            .map(lastEvaluatedKey -> Maps.transformValues(lastEvaluatedKey, AttributeValue::s))
                             .orElse(null)));
         }
 
@@ -1288,9 +1159,7 @@ class DynamoMapperImpl implements DynamoMapper {
         public ShardAndExclusiveStartKey wrapShardedLastEvaluatedKey(Optional<Map<String, AttributeValue>> lastEvaluatedKeyOpt, int shard) {
             return new ShardAndExclusiveStartKey(
                     shard,
-                    lastEvaluatedKeyOpt
-                            .map(lastEvaluatedKey -> Maps.transformValues(lastEvaluatedKey, AttributeValue::getS))
-                            .map(this::toExclusiveStartKey));
+                    lastEvaluatedKeyOpt);
         }
 
         @Override
@@ -1298,11 +1167,7 @@ class DynamoMapperImpl implements DynamoMapper {
             return gson.toJson(new ShardAndAttributes(
                     shardAndExclusiveStartKey.getShard(),
                     shardAndExclusiveStartKey.getExclusiveStartKey()
-                            .map(primaryKey -> primaryKey.getComponents().stream()
-                                    .collect(Collectors.toMap(
-                                            Attribute::getName,
-                                            // Keys must all be strings
-                                            keyAttribute -> (String) keyAttribute.getValue())))
+                            .map(primaryKey -> Maps.transformValues(primaryKey, AttributeValue::s))
                             .orElse(null)));
         }
 

@@ -2,38 +2,46 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import com.amazonaws.services.dynamodbv2.document.Item;
-import com.amazonaws.services.dynamodbv2.document.KeyAttribute;
-import com.amazonaws.services.dynamodbv2.document.PrimaryKey;
-import com.amazonaws.services.dynamodbv2.document.api.QueryApi;
-import com.amazonaws.services.dynamodbv2.document.api.ScanApi;
-import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.Condition;
 
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
 
 public interface Schema<T> {
-    QueryApi queryApi();
+    String tableName();
 
-    ScanApi scanApi();
+    /**
+     * If this is a an IndexSchema, returns the name of the index.
+     */
+    Optional<String> indexNameOpt();
 
-    PrimaryKey primaryKey(T obj);
+    Map<String, AttributeValue> primaryKey(T obj);
 
-    PrimaryKey primaryKey(Map<String, Object> values);
+    Map<String, AttributeValue> primaryKey(Map<String, Object> values);
 
     String partitionKeyName();
 
-    KeyAttribute partitionKey(T obj);
+    Entry<String, AttributeValue> partitionKey(T obj);
 
-    KeyAttribute partitionKey(Map<String, Object> values);
+    Entry<String, AttributeValue> partitionKey(Map<String, Object> values);
 
-    /** Use if shardKeys are set but partitionKeys are empty */
-    KeyAttribute shardKey(int shard);
+    Map<String, Condition> attrMapToConditions(Entry<String, AttributeValue> attrEntry);
 
-    /** Use if shardKeys and partitionKeys are both needed */
-    KeyAttribute shardKey(int shard, Map<String, Object> values);
+    Map<String, Condition> attrMapToConditions(Map<String, AttributeValue> attrMap);
+
+    /**
+     * Use if shardKeys are set but partitionKeys are empty
+     */
+    Entry<String, AttributeValue> shardKey(int shard);
+
+    /**
+     * Use if shardKeys and partitionKeys are both needed
+     */
+    Entry<String, AttributeValue> shardKey(int shard, Map<String, Object> values);
 
     String partitionKeyValue(T obj);
 
@@ -41,15 +49,15 @@ public interface Schema<T> {
 
     String rangeKeyName();
 
-    KeyAttribute rangeKey(T obj);
+    Entry<String, AttributeValue> rangeKey(T obj);
 
-    KeyAttribute rangeKey(Map<String, Object> values);
+    Entry<String, AttributeValue> rangeKey(Map<String, Object> values);
 
     /**
      * Retrieve sort key from incomplete given values.
      * Intended to be used by a range query.
      */
-    KeyAttribute rangeKeyPartial(Map<String, Object> values);
+    Entry<String, AttributeValue> rangeKeyPartial(Map<String, Object> values);
 
     /**
      * Retrieve sort key value from incomplete given values.
@@ -58,34 +66,26 @@ public interface Schema<T> {
     String rangeValuePartial(Map<String, Object> values);
 
 
-    Object toDynamoValue(String fieldName, Object object);
-
-    Object fromDynamoValue(String fieldName, Object object);
-
     AttributeValue toAttrValue(String fieldName, Object object);
 
     Object fromAttrValue(String fieldName, AttributeValue attrVal);
-
-    Item toItem(T obj);
-
-    T fromItem(Item item);
 
     ImmutableMap<String, AttributeValue> toAttrMap(T obj);
 
     T fromAttrMap(Map<String, AttributeValue> attrMap);
 
 
-    /** Shard count or -1 if shardKeys are not set */
+    /**
+     * Shard count or -1 if shardKeys are not set
+     */
     int shardCount();
 
 
-    String upsertExpression(T object, Map<String, String> nameMap, Map<String, Object> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression);
+    String upsertExpression(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression);
 
-    String upsertExpressionAttrVal(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression);
+    Optional<String> serializeLastEvaluatedKey(Map<String, AttributeValue> lastEvaluatedKey);
 
-    String serializeLastEvaluatedKey(Map<String, AttributeValue> lastEvaluatedKey);
-
-    PrimaryKey toExclusiveStartKey(String serializedlastEvaluatedKey);
+    Map<String, AttributeValue> toExclusiveStartKey(String serializedlastEvaluatedKey);
 
     String serializeShardedLastEvaluatedKey(Optional<Map<String, AttributeValue>> lastEvaluatedKeyOpt, int shard);
 

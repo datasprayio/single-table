@@ -16,22 +16,34 @@ public @interface DynamoTable {
 
     TableType type();
 
-    /** For GSI and LSI type only, specify which index starting with 1 */
+    /**
+     * For GSI and LSI type only, specify which index starting with 1
+     */
     int indexNumber() default -1;
 
-    /** Partition keys to be compounded together. Lsi should match Primary's keys */
+    /**
+     * Partition keys to be compounded together. Lsi should match Primary's keys
+     */
     String[] partitionKeys() default {};
 
-    /** Keys to be hashed together to form a partition. Do not modify after usage, carefully plan ahead. */
+    /**
+     * Keys to be hashed together to form a partition. Do not modify after usage, carefully plan ahead.
+     */
     String[] shardKeys() default {};
 
-    /** If using shardKeys, number of shards to use. Do not modify after usage, carefully plan ahead. */
+    /**
+     * If using shardKeys, number of shards to use. Do not modify after usage, carefully plan ahead.
+     */
     int shardCount() default -1;
 
-    /** Partition key prefix to be used with sharding */
+    /**
+     * Partition key prefix to be used with sharding
+     */
     String shardPrefix() default "shard";
 
-    /** Sort keys to be compounded together */
+    /**
+     * Sort keys to be compounded together
+     */
     String[] rangeKeys() default {};
 
     /**

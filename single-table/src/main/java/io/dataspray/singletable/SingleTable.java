@@ -2,39 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
-import com.amazonaws.services.dynamodbv2.document.BatchGetItemOutcome;
-import com.amazonaws.services.dynamodbv2.document.BatchWriteItemOutcome;
-import com.amazonaws.services.dynamodbv2.document.DynamoDB;
-import com.amazonaws.services.dynamodbv2.document.Item;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.gson.Gson;
 import lombok.Builder;
 import lombok.NonNull;
 import software.amazon.awscdk.services.dynamodb.Table;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.constructs.Construct;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 public class SingleTable implements DynamoMapper {
     public static final String TTL_IN_EPOCH_SEC_ATTR_NAME = "ttlInEpochSec";
 
+    @VisibleForTesting
     DynamoMapperImpl mapper;
+    @VisibleForTesting
     DynamoUtil util;
 
     @Builder
-    private SingleTable(AmazonDynamoDB overrideDynamo, @NonNull String tablePrefix, Gson overrideGson) {
-        overrideDynamo = overrideDynamo != null ? overrideDynamo
-                : AmazonDynamoDBClientBuilder.standard()
-                .withCredentials(DefaultAWSCredentialsProviderChain.getInstance())
-                .build();
-        DynamoDB dynamoDoc = new DynamoDB(overrideDynamo);
+    private SingleTable(@NonNull String tablePrefix, Gson overrideGson) {
         Gson gson = overrideGson != null ? overrideGson : new Gson();
-        this.mapper = new DynamoMapperImpl(tablePrefix, gson, overrideDynamo, dynamoDoc);
-        this.util = new DynamoUtil(dynamoDoc);
+        this.mapper = new DynamoMapperImpl(tablePrefix, gson);
+        this.util = new DynamoUtil();
     }
 
     @Override
@@ -43,8 +34,8 @@ public class SingleTable implements DynamoMapper {
     }
 
     @Override
-    public void createTableIfNotExists(int lsiCount, int gsiCount) {
-        mapper.createTableIfNotExists(lsiCount, gsiCount);
+    public void createTableIfNotExists(DynamoDbClient dynamo, int lsiCount, int gsiCount) {
+        mapper.createTableIfNotExists(dynamo, lsiCount, gsiCount);
     }
 
     @Override
@@ -62,20 +53,12 @@ public class SingleTable implements DynamoMapper {
         return mapper.parseGlobalSecondaryIndexSchema(indexNumber, objClazz);
     }
 
-    public Stream<Item> retryUnprocessed(BatchGetItemOutcome outcome) {
-        return util.retryUnprocessed(outcome);
+    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
+        return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize);
     }
 
-    public void retryUnprocessed(BatchWriteItemOutcome outcome) {
-        util.retryUnprocessed(outcome);
-    }
-
-    public <T> ShardPageResult<T> fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
-        return util.fetchShardNextPage(schema, cursorOpt, maxPageSize);
-    }
-
-    public <T> ShardPageResult<T> fetchShardNextPage(Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
-        return util.fetchShardNextPage(schema, cursorOpt, maxPageSize, values);
+    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
+        return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize, values);
     }
 
     public int deterministicPartition(String input, int partitionCount) {
