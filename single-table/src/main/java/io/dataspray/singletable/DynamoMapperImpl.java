@@ -110,6 +110,14 @@ class DynamoMapperImpl implements DynamoMapper {
         } catch (ResourceNotFoundException ex) {
             tableExists = false;
             tableTtlExists = false;
+        } catch (DynamoDbException ex) {
+            // Moto behavior used in testing
+            if ("Table not found".equals(ex.getMessage())) {
+                tableExists = false;
+                tableTtlExists = false;
+            } else {
+                throw ex;
+            }
         }
         if (!tableExists) {
             ArrayList<KeySchemaElement> primaryKeySchemas = Lists.newArrayList();
