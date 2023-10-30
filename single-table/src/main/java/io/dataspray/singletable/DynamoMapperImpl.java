@@ -112,7 +112,7 @@ class DynamoMapperImpl implements DynamoMapper {
             tableTtlExists = false;
         } catch (DynamoDbException ex) {
             // Moto behavior used in testing
-            if ("Table not found".equals(ex.getMessage())) {
+            if ("Table not found".equals(ex.awsErrorDetails().errorMessage())) {
                 tableExists = false;
                 tableTtlExists = false;
             } else {
