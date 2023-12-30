@@ -66,7 +66,6 @@ class DynamoMapperImpl implements DynamoMapper {
                 .timeToLiveAttribute(SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME)
                 .build();
 
-        ImmutableList.builder();
         LongStream.range(1, lsiCount + 1).forEach(indexNumber -> {
             table.addLocalSecondaryIndex(LocalSecondaryIndexProps.builder()
                     .indexName(getTableOrIndexName(Lsi, indexNumber))
