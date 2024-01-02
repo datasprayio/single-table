@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import com.dampcake.gson.immutable.ImmutableAdapterFactory;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import lombok.Builder;
 import lombok.NonNull;
 import software.amazon.awscdk.services.dynamodb.Table;
@@ -23,7 +26,11 @@ public class SingleTable implements DynamoMapper {
 
     @Builder
     private SingleTable(@NonNull String tablePrefix, Gson overrideGson) {
-        Gson gson = overrideGson != null ? overrideGson : new Gson();
+        Gson gson = overrideGson != null ? overrideGson : new GsonBuilder()
+                .setFieldNamingPolicy(FieldNamingPolicy.IDENTITY)
+                .disableHtmlEscaping()
+                .registerTypeAdapterFactory(ImmutableAdapterFactory.forGuava())
+                .create();
         this.mapper = new DynamoMapperImpl(tablePrefix, gson);
         this.util = new DynamoUtil();
     }

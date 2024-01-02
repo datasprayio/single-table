@@ -86,6 +86,11 @@
                 <version>${gson.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.dampcake</groupId>
+                <artifactId>gson-immutable</artifactId>
+                <version>1.2</version>
+            </dependency>
+            <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>bom</artifactId>
                 <version>${aws.sdk.version}</version>

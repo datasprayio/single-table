@@ -77,6 +77,19 @@ public class DynamoMapperConversionTest extends AbstractDynamoTest {
         private final ImmutableSet<String> immutableSet;
         private final BigDecimal bigDecimal;
         private final BigInteger bigInteger;
+        private final InnerData inner;
+        private final List<InnerData> innerList;
+        private final ImmutableList<InnerData> innerImmutableList;
+    }
+
+    @Value
+    @Builder(toBuilder = true)
+    @AllArgsConstructor
+    public static class InnerData {
+        @NonNull
+        private final String id;
+        private final Boolean boolObj;
+        private final ImmutableSet<String> immutableSet;
     }
 
     @Parameters(name = "{0} {1}")
@@ -113,7 +126,10 @@ public class DynamoMapperConversionTest extends AbstractDynamoTest {
                 {"immutableMap", ImmutableMap.of()},
                 {"immutableSet", ImmutableSet.of()},
                 {"bigDecimal", new BigDecimal("3243289.342849032480932")},
-                {"bigInteger", new BigInteger("32432893428490324809320000")}
+                {"bigInteger", new BigInteger("32432893428490324809320000")},
+                {"inner", new InnerData("asdf", null, ImmutableSet.of("asdf"))},
+                {"innerList", List.of(new InnerData("asdf", null, ImmutableSet.of("asdf")))},
+                {"innerImmutableList", ImmutableList.of(new InnerData("asdf", null, ImmutableSet.of("asdf")))}
         });
     }
 

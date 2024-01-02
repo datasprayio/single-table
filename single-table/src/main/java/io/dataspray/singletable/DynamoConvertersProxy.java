@@ -17,6 +17,7 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Stream;
 
 
 class DynamoConvertersProxy {
@@ -128,77 +129,84 @@ class DynamoConvertersProxy {
         up.put(String.class, AttributeValue::s);
         up.put(Instant.class, a -> Instant.parse(a.s()));
 
-        mc.put(List.class, (o, m) -> o == null ? null : AttributeValue.fromL(((List<?>) o).stream()
-                .map(m::marshall)
-                .collect(ImmutableList.toImmutableList())));
-        uc.put(List.class, (a, u) -> a == null || Boolean.TRUE.equals(a.nul()) ? null : a.l().stream()
-                .map(u::unmarshall)
-                .collect(ImmutableList.toImmutableList()));
-        di.put(List.class, ImmutableList::of);
-        mc.put(Map.class, (o, m) -> o == null ? null : AttributeValue.fromM(((Map<?, ?>) o).entrySet().stream()
-                .collect(ImmutableMap.toImmutableMap(
-                        e -> (String) e.getKey(),
-                        e -> m.marshall(e.getValue())
-                ))));
-        uc.put(Map.class, (a, u) -> a == null || Boolean.TRUE.equals(a.nul()) || !a.hasM() ? null : a.m().entrySet().stream()
-                .collect(ImmutableMap.toImmutableMap(
-                        Map.Entry::getKey,
-                        e -> u.unmarshall(e.getValue())
-                )));
-        di.put(Map.class, ImmutableMap::of);
-        mc.put(Set.class, (o, m) -> {
-            // Empty set not allowed by DynamoDB so:
-            // empty set == null in DB
-            if (o == null || ((Set<?>) o).isEmpty()) {
-                return null;
-            }
-            int[] setType = {0};
-            ImmutableSet<?> set = ((Set<?>) o).stream()
+        Stream.of(List.class, ImmutableList.class).forEach(listClazz -> {
+            mc.put(listClazz, (o, m) -> o == null ? null : AttributeValue.fromL(((List<?>) o).stream()
                     .map(m::marshall)
-                    .map(v -> {
-                        if (!Strings.isNullOrEmpty(v.s())) {
-                            setType[0] = 0;
-                            return v.s();
-                        } else if (!Strings.isNullOrEmpty(v.n())) {
-                            setType[0] = 1;
-                            return v.n();
-                        } else if (v.b() != null) {
-                            setType[0] = 2;
-                            return v.b();
-                        } else if (v.nul() != null) {
-                            throw new IllegalStateException("Set cannot have null item");
-                        } else {
-                            throw new IllegalStateException("Set of unsupported type: " + v.toString());
-                        }
-                    })
-                    .collect(ImmutableSet.toImmutableSet());
-            if (setType[0] == 0) {
-                //noinspection unchecked
-                return AttributeValue.builder().ss((ImmutableSet<String>) set).build();
-            } else if (setType[0] == 1) {
-                //noinspection unchecked
-                return AttributeValue.builder().ns((ImmutableSet<String>) set).build();
-            } else {
-                //noinspection unchecked
-                return AttributeValue.builder().bs((ImmutableSet<SdkBytes>) set).build();
-            }
+                    .collect(ImmutableList.toImmutableList())));
+            uc.put(listClazz, (a, u) -> a == null || Boolean.TRUE.equals(a.nul()) ? null : a.l().stream()
+                    .map(u::unmarshall)
+                    .collect(ImmutableList.toImmutableList()));
+            di.put(listClazz, ImmutableList::of);
         });
-        uc.put(Set.class, (a, u) -> {
-            // Empty set not allowed by DynamoDB, also null value prevents from adding to set, so:
-            // Missing in DB == empty set
-            if (a == null || Boolean.TRUE.equals(a.nul())) {
-                return ImmutableSet.of();
-            } else if (a.hasSs()) {
-                return a.ss().stream().map(i -> u.unmarshall(AttributeValue.fromS(i))).collect(ImmutableSet.toImmutableSet());
-            } else if (a.hasNs()) {
-                return a.ns().stream().map(i -> u.unmarshall(AttributeValue.fromN(i))).collect(ImmutableSet.toImmutableSet());
-            } else if (a.hasBs()) {
-                return a.bs().stream().map(i -> u.unmarshall(AttributeValue.fromB(i))).collect(ImmutableSet.toImmutableSet());
-            } else {
-                return ImmutableSet.of();
-            }
+        Stream.of(Map.class, ImmutableMap.class).forEach(mapClazz -> {
+            mc.put(mapClazz, (o, m) -> o == null ? null : AttributeValue.fromM(((Map<?, ?>) o).entrySet().stream()
+                    .collect(ImmutableMap.toImmutableMap(
+                            e -> (String) e.getKey(),
+                            e -> m.marshall(e.getValue())
+                    ))));
+            uc.put(mapClazz, (a, u) -> a == null || Boolean.TRUE.equals(a.nul()) || !a.hasM() ? null : a.m().entrySet().stream()
+                    .collect(ImmutableMap.toImmutableMap(
+                            Map.Entry::getKey,
+                            e -> u.unmarshall(e.getValue())
+                    )));
+            di.put(mapClazz, ImmutableMap::of);
         });
-        di.put(Set.class, ImmutableSet::of);
+
+        Stream.of(Set.class, ImmutableSet.class).forEach(setClazz -> {
+            mc.put(setClazz, (o, m) -> {
+                // Empty set not allowed by DynamoDB so:
+                // empty set == null in DB
+                if (o == null || ((Set<?>) o).isEmpty()) {
+                    return null;
+                }
+                int[] setType = {0};
+                ImmutableSet<?> set = ((Set<?>) o).stream()
+                        .map(m::marshall)
+                        .map(v -> {
+                            if (!Strings.isNullOrEmpty(v.s())) {
+                                setType[0] = 0;
+                                return v.s();
+                            } else if (!Strings.isNullOrEmpty(v.n())) {
+                                setType[0] = 1;
+                                return v.n();
+                            } else if (v.b() != null) {
+                                setType[0] = 2;
+                                return v.b();
+                            } else if (v.nul() != null) {
+                                throw new IllegalStateException("Set cannot have null item");
+                            } else {
+                                throw new IllegalStateException("Set of unsupported type: " + v.toString());
+                            }
+                        })
+                        .collect(ImmutableSet.toImmutableSet());
+                if (setType[0] == 0) {
+                    //noinspection unchecked
+                    return AttributeValue.builder().ss((ImmutableSet<String>) set).build();
+                } else if (setType[0] == 1) {
+                    //noinspection unchecked
+                    return AttributeValue.builder().ns((ImmutableSet<String>) set).build();
+                } else {
+                    //noinspection unchecked
+                    return AttributeValue.builder().bs((ImmutableSet<SdkBytes>) set).build();
+                }
+            });
+            uc.put(setClazz, (a, u) -> {
+                // Empty set not allowed by DynamoDB, also null value prevents from adding to set, so:
+                // Missing in DB == empty set
+                if (a == null || Boolean.TRUE.equals(a.nul())) {
+                    return ImmutableSet.of();
+                } else if (a.hasSs()) {
+                    return a.ss().stream().map(i -> u.unmarshall(AttributeValue.fromS(i))).collect(ImmutableSet.toImmutableSet());
+                } else if (a.hasNs()) {
+                    return a.ns().stream().map(i -> u.unmarshall(AttributeValue.fromN(i))).collect(ImmutableSet.toImmutableSet());
+                } else if (a.hasBs()) {
+                    return a.bs().stream().map(i -> u.unmarshall(AttributeValue.fromB(i))).collect(ImmutableSet.toImmutableSet());
+                } else {
+                    return ImmutableSet.of();
+                }
+            });
+            di.put(setClazz, ImmutableSet::of);
+        });
 
         convertersCache = new Converters(
                 mp.build().entrySet(),
