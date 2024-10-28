@@ -12,16 +12,21 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
 class DynamoUtil {
 
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
-        return fetchShardNextPage(client, schema, cursorOpt, maxPageSize, Map.of());
+        return fetchShardNextPage(client, schema, cursorOpt, maxPageSize, Map.of(), null);
     }
 
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions) {
+        return fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions, null);
+    }
+
+    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions, Consumer<QueryRequest> queryRequestConsumer) {
         checkArgument(maxPageSize > 0, "Max page size must be greater than zero");
         Optional<ShardAndExclusiveStartKey> shardAndExclusiveStartKeyOpt = cursorOpt.map(schema::toShardedExclusiveStartKey);
         ImmutableList.Builder<T> itemsBuilder = ImmutableList.builder();
@@ -30,13 +35,16 @@ class DynamoUtil {
             QueryRequest.Builder queryBuilder = QueryRequest.builder()
                     .tableName(schema.tableName());
             schema.indexNameOpt().ifPresent(queryBuilder::indexName);
-            QueryResponse page = client.query(queryBuilder
+            queryBuilder
                     .keyConditions(schema.attrMapToConditions(schema.shardKey(shard, keyConditions)))
                     .limit(maxPageSize)
                     .exclusiveStartKey(shardAndExclusiveStartKeyOpt
                             .flatMap(ShardAndExclusiveStartKey::getExclusiveStartKey)
-                            .orElse(null))
-                    .build());
+                            .orElse(null));
+            if(queryRequestConsumer != null) {
+                queryRequestConsumer.accept(queryBuilder);
+            }
+            QueryResponse page = client.query(queryBuilder.build());
             shardAndExclusiveStartKeyOpt = (page.hasLastEvaluatedKey() ? Optional.of(page.lastEvaluatedKey()) : Optional.<Map<String, AttributeValue>>empty())
                     .map(lastEvaluatedKey -> schema.wrapShardedLastEvaluatedKey(Optional.of(lastEvaluatedKey), shard))
                     .or(() -> shard < (schema.shardCount() - 1)

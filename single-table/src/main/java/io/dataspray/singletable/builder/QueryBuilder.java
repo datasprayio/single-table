@@ -32,6 +32,7 @@ public class QueryBuilder<T> extends ExpressionBuilder<T, QueryBuilder<T>> imple
         Expression expression = buildExpression();
         QueryRequest.Builder builder = QueryRequest.builder();
         builder.tableName(schema.tableName());
+        schema.indexNameOpt().ifPresent(builder::indexName);
         checkState(expression.updateExpression().isEmpty(), "Query does not support update expression");
         expression.conditionExpression().ifPresent(builder::filterExpression);
         expression.expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
