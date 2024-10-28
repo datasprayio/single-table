@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import io.dataspray.singletable.builder.*;
-import software.amazon.awssdk.services.dynamodb.model.*;
+import io.dataspray.singletable.builder.DeleteBuilder;
+import io.dataspray.singletable.builder.GetBuilder;
+import io.dataspray.singletable.builder.PutBuilder;
+import io.dataspray.singletable.builder.UpdateBuilder;
 
 public interface TableSchema<T> extends Schema<T> {
 

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import io.dataspray.singletable.builder.Expression;
 import io.dataspray.singletable.builder.UpdateBuilder;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
