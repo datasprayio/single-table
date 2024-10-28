@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import io.dataspray.singletable.builder.Expression;
+import io.dataspray.singletable.builder.UpdateBuilder;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.util.UUID;
 
@@ -35,15 +38,16 @@ public class DynamoExpressionTest extends AbstractDynamoTest {
     public void test() throws Exception {
         TableSchema<Data> primary = mapper.parseTableSchema(Data.class);
 
-        Expression expression = primary.expressionBuilder()
+        UpdateBuilder<Data> updateBuilder = primary.update()
                 .set("f1", "CHANGED")
                 .conditionExists()
                 .conditionFieldEquals("f2", 4L)
                 .conditionFieldExists("f3")
-                .conditionFieldNotExists("f1")
-                .build();
+                .conditionFieldNotExists("f1");
+        log.info("updateBuilder: {}", updateBuilder);
+        UpdateItemRequest.Builder updateItemRequestBuilder = updateBuilder.builder();
 
-        assertExpression(primary, expression, putData(primary, Data.builder()
+        assertExpression(primary, updateItemRequestBuilder, putData(primary, Data.builder()
                 .id(UUID.randomUUID().toString())
                 .rk(UUID.randomUUID().toString())
                 .f2(4L)
@@ -52,7 +56,7 @@ public class DynamoExpressionTest extends AbstractDynamoTest {
                 .build())
                 .toBuilder().f1("CHANGED").build());
 
-        assertExpressionConditionFails(primary, expression, putData(primary, Data.builder()
+        assertExpressionConditionFails(primary, updateItemRequestBuilder, putData(primary, Data.builder()
                 .id(UUID.randomUUID().toString())
                 .rk(UUID.randomUUID().toString())
                 .f2(5L) // Incorrect
@@ -60,7 +64,7 @@ public class DynamoExpressionTest extends AbstractDynamoTest {
                 .f4(3)
                 .build()));
 
-        assertExpressionConditionFails(primary, expression, putData(primary, Data.builder()
+        assertExpressionConditionFails(primary, updateItemRequestBuilder, putData(primary, Data.builder()
                 .id(UUID.randomUUID().toString())
                 .rk(UUID.randomUUID().toString())
                 .f2(4L)
@@ -68,7 +72,7 @@ public class DynamoExpressionTest extends AbstractDynamoTest {
                 .f4(7)
                 .build()));
 
-        assertExpressionConditionFails(primary, expression, putData(primary, Data.builder()
+        assertExpressionConditionFails(primary, updateItemRequestBuilder, putData(primary, Data.builder()
                 .id(UUID.randomUUID().toString())
                 .rk(UUID.randomUUID().toString())
                 .f1("htg") // Should be missing
@@ -77,19 +81,17 @@ public class DynamoExpressionTest extends AbstractDynamoTest {
                 .build()));
     }
 
-    <T> void assertExpression(Schema<T> schema, Expression expression, T expectedData) {
-        client.updateItem(expression.toUpdateItemRequestBuilder()
-                .key(schema.primaryKey(expectedData)).build());
+    <T> void assertExpression(Schema<T> schema, UpdateItemRequest.Builder builder, T expectedData) {
+        client.updateItem(builder.key(schema.primaryKey(expectedData)).build());
         T actualData = schema.fromAttrMap(client.getItem(b -> b
                 .tableName(schema.tableName())
                 .key(schema.primaryKey(expectedData))).item());
         assertEquals(expectedData, actualData);
     }
 
-    <T> void assertExpressionConditionFails(Schema<T> schema, Expression expression, T expectedData) {
+    <T> void assertExpressionConditionFails(Schema<T> schema, UpdateItemRequest.Builder builder, T expectedData) {
         try {
-            client.updateItem(expression.toUpdateItemRequestBuilder()
-                    .key(schema.primaryKey(expectedData)).build());
+            client.updateItem(builder.key(schema.primaryKey(expectedData)).build());
             fail("Expected ConditionalCheckFailedException");
         } catch (ConditionalCheckFailedException ex) {
             // Expected

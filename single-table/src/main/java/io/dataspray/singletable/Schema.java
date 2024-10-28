@@ -4,6 +4,7 @@ package io.dataspray.singletable;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import io.dataspray.singletable.builder.QueryBuilder;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.Condition;
 
@@ -14,10 +15,9 @@ import java.util.Optional;
 public interface Schema<T> {
     String tableName();
 
-    /**
-     * If this is a an IndexSchema, returns the name of the index.
-     */
-    Optional<String> indexNameOpt();
+
+    QueryBuilder<T> query();
+
 
     Map<String, AttributeValue> primaryKey(T obj);
 
@@ -66,6 +66,8 @@ public interface Schema<T> {
     String rangeValuePartial(Map<String, Object> values);
 
 
+    AttributeValue toAttrValue(Object object);
+
     AttributeValue toAttrValue(String fieldName, Object object);
 
     Object fromAttrValue(String fieldName, AttributeValue attrVal);
@@ -81,8 +83,6 @@ public interface Schema<T> {
     int shardCount();
 
 
-    String upsertExpression(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression);
-
     Optional<String> serializeLastEvaluatedKey(Map<String, AttributeValue> lastEvaluatedKey);
 
     Map<String, AttributeValue> toExclusiveStartKey(String serializedlastEvaluatedKey);
@@ -94,4 +94,11 @@ public interface Schema<T> {
     String serializeShardedLastEvaluatedKey(ShardAndExclusiveStartKey shardAndExclusiveStartKey);
 
     ShardAndExclusiveStartKey toShardedExclusiveStartKey(String serializedShardedLastEvaluatedKey);
+
+
+    /**
+     * If this is an IndexSchema, returns the name of the index.
+     */
+    @Deprecated
+    Optional<String> indexNameOpt();
 }

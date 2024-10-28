@@ -3,7 +3,6 @@
 package io.dataspray.singletable;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.*;
@@ -11,7 +10,9 @@ import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 import io.dataspray.singletable.DynamoConvertersProxy.*;
+import io.dataspray.singletable.builder.*;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
@@ -27,7 +28,6 @@ import java.util.Map.Entry;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -499,285 +499,6 @@ class DynamoMapperImpl implements DynamoMapper {
         ImmutableMap<String, MarshallerAttrVal> fieldAttrMarshallers = fieldAttrMarshallersBuilder.build();
         ImmutableMap<String, UnMarshallerAttrVal> fieldAttrUnMarshallers = fieldAttrUnMarshallersBuilder.build();
 
-        // Expression Builder Supplier
-        Supplier<ExpressionBuilder> expressionBuilderSupplier = () -> new ExpressionBuilder() {
-            private boolean built = false;
-            private final Map<String, String> nameMap = Maps.newHashMap();
-            private final Map<String, AttributeValue> valMap = Maps.newHashMap();
-            private final Map<String, String> setUpdates = Maps.newHashMap();
-            private final Map<String, String> removeUpdates = Maps.newHashMap();
-            private final Map<String, String> addUpdates = Maps.newHashMap();
-            private final Map<String, String> deleteUpdates = Maps.newHashMap();
-            private final List<String> conditionExpressions = Lists.newArrayList();
-
-            @Override
-            public ExpressionBuilder set(String fieldName, Object object) {
-                checkState(!built);
-                checkState(!setUpdates.containsKey(fieldName));
-                setUpdates.put(fieldName,
-                        fieldMapping(fieldName) + " = " + valueMapping(fieldName, object));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder set(ImmutableList<String> namePath, AttributeValue value) {
-                checkState(!built);
-                checkArgument(!namePath.isEmpty());
-                String fieldMapping = fieldMapping(namePath);
-                checkState(!addUpdates.containsKey(fieldMapping));
-                setUpdates.put(fieldMapping,
-                        fieldMapping + " = " + constantMapping(namePath, value));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder setIncrement(String fieldName, Number increment) {
-                checkState(!built);
-                checkState(!setUpdates.containsKey(fieldName));
-                setUpdates.put(fieldName, String.format("%s = if_not_exists(%s, %s) + %s",
-                        fieldMapping(fieldName),
-                        fieldMapping(fieldName),
-                        constantMapping("zero", AttributeValue.fromN("0")),
-                        valueMapping(fieldName, increment)));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder setExpression(String fieldName, String valueExpression) {
-                checkState(!built);
-                checkState(!setUpdates.containsKey(fieldName));
-                setUpdates.put(fieldName,
-                        fieldMapping(fieldName) + " = " + valueExpression);
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder setExpression(String expression) {
-                checkState(!built);
-                setUpdates.put(expression, expression);
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder add(String fieldName, Object object) {
-                checkState(!built);
-                checkState(!addUpdates.containsKey(fieldName));
-                addUpdates.put(fieldName,
-                        fieldMapping(fieldName) + " " + valueMapping(fieldName, object));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder add(ImmutableList<String> fieldPath, AttributeValue value) {
-                checkState(!built);
-                checkArgument(!fieldPath.isEmpty());
-                String fieldMapping = fieldMapping(fieldPath);
-                checkState(!addUpdates.containsKey(fieldMapping));
-                addUpdates.put(fieldMapping,
-                        fieldMapping + " " + constantMapping(fieldPath, value));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder remove(String fieldName) {
-                checkState(!built);
-                checkState(!removeUpdates.containsKey(fieldName));
-                removeUpdates.put(fieldName, fieldMapping(fieldName));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder remove(ImmutableList<String> fieldPath) {
-                checkState(!built);
-                checkArgument(!fieldPath.isEmpty());
-                String fieldMapping = fieldMapping(fieldPath);
-                checkState(!addUpdates.containsKey(fieldMapping));
-                removeUpdates.put(fieldMapping, fieldMapping);
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder delete(String fieldName, Object object) {
-                checkState(!built);
-                checkState(!deleteUpdates.containsKey(fieldName));
-                deleteUpdates.put(fieldName,
-                        fieldMapping(fieldName) + " " + valueMapping(fieldName, object));
-                return this;
-            }
-
-            @Override
-            public AttributeValue toAttrVal(String fieldName, Object object) {
-                if (object instanceof String) {
-                    // For partition range keys and strings in general, there is no marshaller
-                    return AttributeValue.fromS((String) object);
-                } else {
-                    return checkNotNull(fieldAttrMarshallers.get(fieldName),
-                            "Unknown field name %s", fieldName)
-                            .marshall(object);
-                }
-            }
-
-            @Override
-            public String fieldMapping(String fieldName) {
-                checkState(!built);
-                String mappedName = "#" + sanitizeFieldMapping(fieldName);
-                nameMap.put(mappedName, fieldName);
-                return mappedName;
-            }
-
-            @Override
-            public String fieldMapping(ImmutableList<String> fieldPath) {
-                return fieldPath.stream()
-                        .map(this::fieldMapping)
-                        .collect(Collectors.joining("."));
-            }
-
-            @Override
-            public String fieldMapping(String fieldName, String fieldValue) {
-                checkState(!built);
-                String mappedName = "#" + sanitizeFieldMapping(fieldName);
-                nameMap.put(mappedName, fieldValue);
-                return mappedName;
-            }
-
-            @Override
-            public String valueMapping(String fieldName, Object object) {
-                checkState(!built);
-                return constantMapping(fieldName, toAttrVal(fieldName, object));
-            }
-
-            @Override
-            public String constantMapping(String name, AttributeValue value) {
-                checkState(!built);
-                String mappedName = ":" + sanitizeFieldMapping(name);
-                valMap.put(mappedName, value);
-                return mappedName;
-            }
-
-            @Override
-            public String constantMapping(ImmutableList<String> namePath, AttributeValue value) {
-                return constantMapping(namePath.stream()
-                        .map(String::toLowerCase)
-                        .collect(Collectors.joining("X")), value);
-            }
-
-            @Override
-            public ExpressionBuilder condition(String expression) {
-                checkState(!built);
-                conditionExpressions.add(expression);
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder conditionExists() {
-                checkState(!built);
-                conditionExpressions.add("attribute_exists(" + fieldMapping(partitionKeyName) + ")");
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder conditionNotExists() {
-                checkState(!built);
-                conditionExpressions.add("attribute_not_exists(" + fieldMapping(partitionKeyName) + ")");
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder conditionFieldEquals(String fieldName, Object objectOther) {
-                checkState(!built);
-                conditionExpressions.add(fieldMapping(fieldName) + " = " + valueMapping(fieldName, objectOther));
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder conditionFieldExists(String fieldName) {
-                checkState(!built);
-                conditionExpressions.add("attribute_exists(" + fieldMapping(fieldName) + ")");
-                return this;
-            }
-
-            @Override
-            public ExpressionBuilder conditionFieldNotExists(String fieldName) {
-                checkState(!built);
-                conditionExpressions.add("attribute_not_exists(" + fieldMapping(fieldName) + ")");
-                return this;
-            }
-
-            @Override
-            public Expression build() {
-                built = true;
-                ArrayList<String> updates = Lists.newArrayList();
-                if (!setUpdates.isEmpty()) {
-                    updates.add("SET " + String.join(", ", setUpdates.values()));
-                }
-                if (!addUpdates.isEmpty()) {
-                    updates.add("ADD " + String.join(", ", addUpdates.values()));
-                }
-                if (!removeUpdates.isEmpty()) {
-                    updates.add("REMOVE " + String.join(", ", removeUpdates.values()));
-                }
-                if (!deleteUpdates.isEmpty()) {
-                    updates.add("DELETE " + String.join(", ", deleteUpdates.values()));
-                }
-                final Optional<String> updateOpt = Optional.ofNullable(Strings.emptyToNull(String.join(" ", updates)));
-                final Optional<String> conditionOpt = Optional.ofNullable(Strings.emptyToNull(String.join(" AND ", conditionExpressions)));
-                final Optional<ImmutableMap<String, String>> nameImmutableMapOpt = nameMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(nameMap));
-                final Optional<ImmutableMap<String, AttributeValue>> valImmutableMapOpt = valMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(valMap));
-                log.trace("Built dynamo expression: update {} condition {} nameMap {} valKeys {}",
-                        updateOpt, conditionOpt, nameImmutableMapOpt, valImmutableMapOpt.map(ImmutableMap::keySet));
-                return new Expression() {
-                    @Override
-                    public UpdateItemRequest.Builder toUpdateItemRequestBuilder() {
-                        return toUpdateItemRequestBuilder(UpdateItemRequest.builder());
-                    }
-
-                    @Override
-                    public UpdateItemRequest.Builder toUpdateItemRequestBuilder(UpdateItemRequest.Builder builder) {
-                        builder.tableName(tableName);
-                        updateExpression().ifPresent(builder::updateExpression);
-                        conditionExpression().ifPresent(builder::conditionExpression);
-                        expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
-                        expressionAttributeValues().ifPresent(builder::expressionAttributeValues);
-                        return builder;
-                    }
-
-                    @Override
-                    public Optional<String> updateExpression() {
-                        return updateOpt;
-                    }
-
-                    @Override
-                    public Optional<String> conditionExpression() {
-                        return conditionOpt;
-                    }
-
-                    @Override
-                    public Optional<ImmutableMap<String, String>> expressionAttributeNames() {
-                        return nameImmutableMapOpt;
-                    }
-
-                    @Override
-                    public Optional<ImmutableMap<String, AttributeValue>> expressionAttributeValues() {
-                        return valImmutableMapOpt;
-                    }
-
-                    @Override
-                    public String toString() {
-                        return MoreObjects.toStringHelper(this)
-                                .add("updateExpression", this.updateExpression())
-                                .add("conditionExpression", this.conditionExpression())
-                                .add("nameMap", this.expressionAttributeNames())
-                                .add("valMap", this.expressionAttributeValues())
-                                .toString();
-                    }
-                };
-            }
-
-            private String sanitizeFieldMapping(String fieldName) {
-                return fieldName.replaceAll("(^[^a-z])|[^a-zA-Z0-9]", "x");
-            }
-        };
-
         return new SchemaImpl<T>(
                 type,
                 partitionKeys,
@@ -796,7 +517,6 @@ class DynamoMapperImpl implements DynamoMapper {
                 fromAttrMapToCtorArgs,
                 objCtor,
                 toAttrMapMapper,
-                expressionBuilderSupplier,
                 partitionKeyValueObjGetter,
                 partitionKeyValueMapGetter,
                 partitionKeyValueMapShardGetter);
@@ -869,6 +589,7 @@ class DynamoMapperImpl implements DynamoMapper {
         return Optional.empty();
     }
 
+    @RequiredArgsConstructor
     public class SchemaImpl<T> implements TableSchema<T>, IndexSchema<T> {
         private final TableType type;
         private final String[] partitionKeys;
@@ -887,60 +608,38 @@ class DynamoMapperImpl implements DynamoMapper {
         private final Function<Map<String, AttributeValue>, Object[]> fromAttrMapToCtorArgs;
         private final Constructor<T> objCtor;
         private final Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper;
-        private final Supplier<ExpressionBuilder> expressionBuilderSupplier;
         private final Function<T, String> partitionKeyValueObjGetter;
         private final Function<Map<String, Object>, String> partitionKeyValueMapGetter;
         private final BiFunction<Map<String, Object>, Integer, String> partitionKeyValueMapShardGetter;
 
-        public SchemaImpl(
-                TableType type,
-                String[] partitionKeys,
-                String[] shardKeys,
-                int shardCount,
-                String[] rangeKeys,
-                Field[] partitionKeyFields,
-                Field[] rangeKeyFields,
-                String rangePrefix,
-                String tableName,
-                Optional<String> indexNameOpt,
-                String partitionKeyName,
-                String rangeKeyName,
-                ImmutableMap<String, MarshallerAttrVal> fieldAttrMarshallers,
-                ImmutableMap<String, UnMarshallerAttrVal> fieldAttrUnMarshallers,
-                Function<Map<String, AttributeValue>, Object[]> fromAttrMapToCtorArgs,
-                Constructor<T> objCtor,
-                Function<T, ImmutableMap<String, AttributeValue>> toAttrMapMapper,
-                Supplier<ExpressionBuilder> expressionBuilderSupplier,
-                Function<T, String> partitionKeyValueObjGetter,
-                Function<Map<String, Object>,
-                        String> partitionKeyValueMapGetter,
-                BiFunction<Map<String, Object>, Integer, String> partitionKeyValueMapShardGetter) {
-            this.type = type;
-            this.partitionKeys = partitionKeys;
-            this.shardKeys = shardKeys;
-            this.shardCount = shardCount;
-            this.rangeKeys = rangeKeys;
-            this.partitionKeyFields = partitionKeyFields;
-            this.rangeKeyFields = rangeKeyFields;
-            this.rangePrefix = rangePrefix;
-            this.tableName = tableName;
-            this.indexNameOpt = indexNameOpt;
-            this.partitionKeyName = partitionKeyName;
-            this.rangeKeyName = rangeKeyName;
-            this.fieldAttrMarshallers = fieldAttrMarshallers;
-            this.fieldAttrUnMarshallers = fieldAttrUnMarshallers;
-            this.fromAttrMapToCtorArgs = fromAttrMapToCtorArgs;
-            this.objCtor = objCtor;
-            this.toAttrMapMapper = toAttrMapMapper;
-            this.expressionBuilderSupplier = expressionBuilderSupplier;
-            this.partitionKeyValueObjGetter = partitionKeyValueObjGetter;
-            this.partitionKeyValueMapGetter = partitionKeyValueMapGetter;
-            this.partitionKeyValueMapShardGetter = partitionKeyValueMapShardGetter;
-        }
-
         @Override
         public String tableName() {
             return tableName;
+        }
+
+        @Override
+        public QueryBuilder<T> query() {
+            return new QueryBuilder<>(this);
+        }
+
+        @Override
+        public GetBuilder<T> get() {
+            return new GetBuilder<>(this);
+        }
+
+        @Override
+        public PutBuilder<T> put() {
+            return new PutBuilder<>(this);
+        }
+
+        @Override
+        public DeleteBuilder<T> delete() {
+            return new DeleteBuilder<>(this);
+        }
+
+        @Override
+        public UpdateBuilder<T> update() {
+            return new UpdateBuilder<>(this);
         }
 
         @Override
@@ -951,11 +650,6 @@ class DynamoMapperImpl implements DynamoMapper {
         @Override
         public String indexName() {
             return indexNameOpt.orElseThrow();
-        }
-
-        @Override
-        public ExpressionBuilder expressionBuilder() {
-            return expressionBuilderSupplier.get();
         }
 
         @Override
@@ -1082,13 +776,33 @@ class DynamoMapperImpl implements DynamoMapper {
         }
 
         @Override
+        public AttributeValue toAttrValue(Object object) {
+            if (object instanceof AttributeValue) {
+                return (AttributeValue) object;
+            }
+            MarshallerAttrVal marshaller = findMarshallerAttrVal(Optional.empty(), object.getClass());
+            if (marshaller == null) {
+                throw new RuntimeException("Cannot find marshaller for " + object.getClass());
+            }
+            return marshaller.marshall(object);
+        }
+
+        @Override
         public AttributeValue toAttrValue(String fieldName, Object object) {
-            return fieldAttrMarshallers.get(fieldName).marshall(object);
+            MarshallerAttrVal marshaller = fieldAttrMarshallers.get(fieldName);
+            if (marshaller == null) {
+                throw new RuntimeException("Cannot find marshaller for field " + fieldName);
+            }
+            return marshaller.marshall(object);
         }
 
         @Override
         public Object fromAttrValue(String fieldName, AttributeValue attrVal) {
-            return fieldAttrUnMarshallers.get(fieldName).unmarshall(attrVal);
+            UnMarshallerAttrVal unMarshaller = fieldAttrUnMarshallers.get(fieldName);
+            if (unMarshaller == null) {
+                throw new RuntimeException("Cannot find unmarshaller for field " + fieldName);
+            }
+            return unMarshaller.unmarshall(attrVal);
         }
 
         @Override
@@ -1115,23 +829,6 @@ class DynamoMapperImpl implements DynamoMapper {
         @Override
         public int shardCount() {
             return shardCount;
-        }
-
-        @Override
-        public String upsertExpression(T object, Map<String, String> nameMap, Map<String, AttributeValue> valMap, ImmutableSet<String> skipFieldNames, String additionalExpression) {
-            List<String> setUpdates = Lists.newArrayList();
-            toAttrMapMapper.apply(object).forEach((key, value) -> {
-                if (partitionKeyName.equals(key) || rangeKeyName.equals(key)) {
-                    return;
-                }
-                if (skipFieldNames.contains(key)) {
-                    return;
-                }
-                nameMap.put("#" + key, key);
-                valMap.put(":" + key, value);
-                setUpdates.add("#" + key + " = " + ":" + key);
-            });
-            return "SET " + String.join(", ", setUpdates) + additionalExpression;
         }
 
         @Override

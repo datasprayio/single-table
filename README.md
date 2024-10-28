@@ -10,7 +10,7 @@ It's as simple as:
 @Value
 @DynamoTable(type = Primary, partitionKeys = "accountId", rangePrefix = "account")
 @DynamoTable(type = Gsi, indexNumber = 1, partitionKeys = {"apiKey"}, rangePrefix = "accountByApiKey")
-@DynamoTable(type = Gsi, indexNumber = 2, partitionKeys = {"oauthGuid"}, rangePrefix = "accountByOauthGuid")
+@DynamoTable(type = Gsi, indexNumber = 2, partitionKeys = {"email"}, rangePrefix = "accountByEmail")
 class Account {
     @NonNull
     String accountId;
@@ -26,17 +26,17 @@ class Account {
 
 // Initialize schema
 SingleTable singleTable = SingleTable.builder()
-        .dynamoDoc(dynamoDoc)
         .tablePrefix("project").build();
 TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
 
 // Insert new account
 Account account = new Account("8426", "matus@example.com", null);
-schema.table().putItem(new PutItemSpec().withItem(schema.toItem(account)));
+schema.put().item(account).execute(client);
 
 // Fetch other account
-Optional<Account> otherAccountOpt = Optional.ofNullable(schema.fromItem(schema.table().getItem(
-        schema.primaryKey(Map.of("accountId","9473")))));
+Optional<Account> otherAccountOpt = Optional.ofNullable(schema.fromAttrMap(
+        dynamo.getItem(schema.get().key(schema.primaryKey(Map
+                .of("accountId", "9473"))).build()).item()));
 ```
 
 Okay, it could be simpler...
@@ -99,7 +99,7 @@ Note you need to indicate how many LSIs and GSIs you would like to create. This 
 your schemas. But don't worry you can always add more later.
 
 ```java
-singleTable.createTableIfNotExists(2, 2);
+singleTable.createTableIfNotExists(dynamo, 2, 2);
 ```
 
 #### Via CDK
@@ -113,69 +113,39 @@ singleTable.createCdkTable(this, "my-stack-name", 2, 2);
 ### Insert an item
 
 ```java
-client.putItem(PutItemRequest.builder()
-    .tableName(schema.tableName())
-    .item(schema.toAttrMap(myAccount))
-    .build())
+schema.put()
+        .item(account)
+        .execute(client);
 ```
 
-### Update and Condition expressions builder
+### Put with condition builder
 
 ```java
-ExpressionBuilder expressionBuilder = schema.expressionBuilder();
+Optional<Account> updatedAccountOpt = schema.update()
+        .key(Map.of("accountId", "12345"))
 
-// Apply conditions
-expressionBuilder
-    // Item exists
-    .conditionExists()
-    // Particular field exists
-    .conditionFieldExists("cancelDate")
-    // Particular field equals a value
-    .conditionFieldEquals("isCancelled", false);
+        // Apply conditions
+        .conditionExists()
+        .conditionFieldExists("cancelDate")
+        .conditionFieldEquals("isCancelled", false)
 
-// Modify data
-expressionBuilder
-    // Overwrite field
-    .set("apiKey", apiKey)
-    // Increment field value
-    .setIncrement("votersCount", 1);
-    // Add to a set
-    .add("transactionIds", ImmutableSet.of("4234", "5312"))
-    // Remove entry from a json field
-    .remove(ImmutableList.of("entryJson", entryId, "isMoved"));
+        // Modify data
+        .set("apiKey", apiKey)
+        .setIncrement("votersCount", 1)
+        // Add to a set
+        .add("transactionIds", ImmutableSet.of("4234", "5312"))
+        // Remove entry from a json field
+        .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
 
-Expression expression = expressionBuilder.build();
-
-// For PUTs
-client.updateItem(expression.toUpdateItemRequestBuilder()
-    .key(schema.primaryKey(expectedData))
-    .build());
-
-// For other requests
-expression.updateExpression().ifPresent(builder::updateExpression);
-expression.conditionExpression().ifPresent(builder::conditionExpression);
-expression.expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
-expression.expressionAttributeValues().ifPresent(builder::expressionAttributeValues);
+        .execute(client);
 ```
 
-### Select an item
+### Get an item
 
 ```java
-Account account = schema.fromAttrMap(client.getItem(b -> b
-    .tableName(schema.tableName())
-    .key(schema.primaryKey(Map.of(
-        "accountId","account-id-123"))))
-    .item());
-```
-
-You may want to wrap it in an optional if you prefer not to work with nulls:
-
-```java
-Optional<Account> accountOpt = Optional.ofNullable(schema.fromAttrMap(client.getItem(b -> b
-    .tableName(schema.tableName())
-    .key(schema.primaryKey(Map.of(
-        "accountId","account-id-123"))))
-    .item()));
+Optional<Account> accountOpt = schema.get()
+        .key(Map.of("accountId", "12345"))
+        .execute(client);
 ```
 
 ### Query ranges with paging
@@ -189,12 +159,11 @@ using `withExclusiveStartKey` to continue quering where we left off.
 Optional<String> cursor = Optional.empty();
 do {
     // Prepare request
-    QueryRequest.Builder builder = QueryRequest.builder()
-        .tableName(schema.tableName())
-        // Query by partition key
-        .keyConditions(schema.attrMapToConditions(schema.partitionKey(Map.of(
-        "partitionKey", partitionKey))))
-        .limit(2);
+    QueryRequest.Builder builder = schema.query()
+            // Query by partition key
+            .keyConditions(Map.of("partitionKey", "partitionKey"))
+            .builder()
+            .limit(2);
     cursor.ifPresent(exclusiveStartKey -> builder.exclusiveStartKey(schema.toExclusiveStartKey(exclusiveStartKey)));
 
     // Perform request
@@ -205,8 +174,8 @@ do {
 
     // Process results
     response.items().stream()
-        .map(schema::fromAttrMap)
-        .forEachOrdered(processor::process);
+            .map(schema::fromAttrMap)
+            .forEachOrdered(processor::process);
 } while (cursor.isPresent());
 ```
 
@@ -234,41 +203,28 @@ And our usage would be:
 
 ```java
 String catId = "A18D5B00";
-
 Cat myCat = new Cat(catId);
 
 // Insertion is same as before, sharding is done under the hood
-schema.table().putItem(PutItemRequest.builder()
-    .tableName(primary.tableName())
-    .item(schema.toAttrMap(myCat))
-    .build());
+schema.put()
+        .item(myCat)
+        .execute(client);
 
 // Retrieving cat is also same as before
-Cat otherCat = schema.fromAttrMap(client.getItem(GetItemRequest.builder()
-        .tableName(schema.tableName())
-        .key(schema.primaryKey(Map.of(
-            "catId", catId)))
-        .build())
-        .item());
-
-// Finally let's query some cats without an entire table scan
-ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
-        client,
-        schema,
-        /* Pagination token */ Optional.empty(),
-        /* page size */ 100);
-processCats(result.getItems());
+Optional<Cat> catOpt = schema.get()
+        .key(Map.of("catId", catId))
+        .execute(dynamo);
 
 // Finally let's dump all our cats using pagination
 Optional<String> cursorOpt = Optional.empty();
 do {
-        ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
+    ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
             client,
             schema,
-            cursorOpt,
+            /* Pagination token */ cursorOpt,
             /* page size */ 100);
-        cursorOpt = result.getCursorOpt();
-        processCats(result.getItems());
+    cursorOpt = result.getCursorOpt();
+    processCats(result.getItems());
 } while (cursorOpt.isPresent());
 ```
 
@@ -279,27 +235,20 @@ overwriting the entire record whether it exists or not and for particular fields
 based on previous value.
 
 ```java
-int catCountDiff = 4; // We want to increment by this amount
+Account account = new Account("12345", "asda@example.com", "api-key");
 
-HashMap<String, String> userCounterNameMap = Maps.newHashMap();
-HashMap<String, Object> userCounterValueMap = Maps.newHashMap();
+// Upsert -- create it
+schema.update()
+        .upsert(account)
+        .execute(client);
 
-userCounterNameMap.put("#catCount", "catCount");
-userCounterValueMap.put(":diff", catCountDiff);
-userCounterValueMap.put(":zero", 0L);
-
-String upsertExpression = schema.upsertExpression(
-        new CatCounter(bagId, catCountDiff),
-        userCounterNameMap,
-        userCounterValueMap,
-        // Indicate we are computing catCount ourselves
-        ImmutableSet.of("catCount"),
-        // Compute catCount by adding existing value (or zero) to our catCountDiff
-        ", #catCount = if_not_exists(#catCount, :zero) + :diff");
+// Upsert -- update it
+schema.update()
+        .upsert(account.toBuilder().apiKey("new-key").build())
+        .execute(client);
 ```
 
-In this case, we have overwritten the `CatCounter` entirely except the `catCount` field. The field we are manually
-calculating by adding the previous value if exists to our `catCountDiff`
+In this case, we have first created an account and then updated the api key.
 
 ### Filter records
 
