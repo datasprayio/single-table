@@ -26,7 +26,7 @@ class DynamoUtil {
         return fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions, null);
     }
 
-    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions, Consumer<QueryRequest> queryRequestConsumer) {
+    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions, Consumer<QueryRequest.Builder> queryRequestConsumer) {
         checkArgument(maxPageSize > 0, "Max page size must be greater than zero");
         Optional<ShardAndExclusiveStartKey> shardAndExclusiveStartKeyOpt = cursorOpt.map(schema::toShardedExclusiveStartKey);
         ImmutableList.Builder<T> itemsBuilder = ImmutableList.builder();
@@ -41,7 +41,7 @@ class DynamoUtil {
                     .exclusiveStartKey(shardAndExclusiveStartKeyOpt
                             .flatMap(ShardAndExclusiveStartKey::getExclusiveStartKey)
                             .orElse(null));
-            if(queryRequestConsumer != null) {
+            if (queryRequestConsumer != null) {
                 queryRequestConsumer.accept(queryBuilder);
             }
             QueryResponse page = client.query(queryBuilder.build());
