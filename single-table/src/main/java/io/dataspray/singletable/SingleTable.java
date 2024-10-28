@@ -11,10 +11,12 @@ import lombok.Builder;
 import lombok.NonNull;
 import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.constructs.Construct;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 public class SingleTable implements DynamoMapper {
     public static final String TTL_IN_EPOCH_SEC_ATTR_NAME = "ttlInEpochSec";
@@ -64,8 +66,12 @@ public class SingleTable implements DynamoMapper {
         return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize);
     }
 
-    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> values) {
-        return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize, values);
+    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions) {
+        return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions);
+    }
+
+    public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions, Consumer<QueryRequest.Builder> queryRequestConsumer) {
+        return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions, queryRequestConsumer);
     }
 
     public int deterministicPartition(String input, int partitionCount) {
