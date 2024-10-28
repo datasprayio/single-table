@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable.builder;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 import java.util.Optional;
+import java.util.function.Consumer;
 
-public interface Expression {
+public interface Expression<B> {
 
     Optional<String> updateExpression();
 
@@ -18,6 +20,8 @@ public interface Expression {
     Optional<ImmutableMap<String, String>> expressionAttributeNames();
 
     Optional<ImmutableMap<String, AttributeValue>> expressionAttributeValues();
+
+    ImmutableList<Consumer<B>> builderAdjustments();
 
     @Override
     String toString();

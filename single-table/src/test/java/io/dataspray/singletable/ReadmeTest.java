@@ -3,18 +3,15 @@
 package io.dataspray.singletable;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
+import io.dataspray.singletable.builder.QueryBuilder;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
-import org.junit.Before;
 import org.junit.Test;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import static io.dataspray.singletable.TableType.Gsi;
 import static io.dataspray.singletable.TableType.Primary;
@@ -94,14 +91,14 @@ public class ReadmeTest extends AbstractDynamoTest {
                 // Apply conditions
                 .conditionNotExists()
                 .conditionFieldNotExists("email")
-//                .conditionFieldNotEquals("apiKey", "123")
+                //                .conditionFieldNotEquals("apiKey", "123")
 
                 // Modify data
                 .set("accountId", "asfasdf")
                 .set("email", "grfgerfg")
                 .setIncrement("votersCount", 1)
                 // Remove entry from a json field
-//                .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
+                //                .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
 
                 .execute(client);
     }
@@ -113,6 +110,17 @@ public class ReadmeTest extends AbstractDynamoTest {
         // ---------
 
         Optional<Account> accountOpt = schema.get()
+                .key(Map.of("accountId", "12345"))
+                .execute(client);
+    }
+
+    @Test(timeout = 20_000L)
+    public void testDelete() throws Exception {
+        TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
+
+        // ---------
+
+        Optional<Account> deletedAccountOpt = schema.delete()
                 .key(Map.of("accountId", "12345"))
                 .execute(client);
     }
@@ -132,15 +140,15 @@ public class ReadmeTest extends AbstractDynamoTest {
         Optional<String> cursor = Optional.empty();
         do {
             // Prepare request
-            QueryRequest.Builder builder = schema.query()
+            QueryBuilder<Account> builder = schema.query()
                     // Query by partition key
-                    .keyConditions(Map.of("accountId", "12345"))
-                    .builder()
-                    .limit(2);
-            cursor.ifPresent(exclusiveStartKey -> builder.exclusiveStartKey(schema.toExclusiveStartKey(exclusiveStartKey)));
+                    .keyConditionsEqualsPrimaryKey(Map.of("accountId", "12345"))
+                    .builder(b -> b.limit(2));
+            cursor.ifPresent(exclusiveStartKey -> builder.builder(b -> b
+                    .exclusiveStartKey(schema.toExclusiveStartKey(exclusiveStartKey))));
 
             // Perform request
-            QueryResponse response = client.query(builder.build());
+            QueryResponse response = builder.execute(client);
 
             // Retrieve next cursor
             cursor = schema.serializeLastEvaluatedKey(response.lastEvaluatedKey());

@@ -8,24 +8,25 @@ import com.google.common.collect.*;
 import io.dataspray.singletable.builder.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import static com.google.common.base.Preconditions.*;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
 
 @Slf4j
 @RequiredArgsConstructor
-public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpressionBuilder<T, P>,
+public abstract class ExpressionBuilder<T, P, B> implements Mappings, UpdateExpressionBuilder<T, P>,
         ConditionExpressionBuilder<P>, FilterExpressionBuilder<P> {
 
     protected final Schema<T> schema;
 
-    protected boolean built = false;
     private final Map<String, String> nameMap = Maps.newHashMap();
     private final Map<String, AttributeValue> valMap = Maps.newHashMap();
     private final Map<String, String> setUpdates = Maps.newHashMap();
@@ -33,12 +34,17 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
     private final Map<String, String> addUpdates = Maps.newHashMap();
     private final Map<String, String> deleteUpdates = Maps.newHashMap();
     private final List<String> conditionExpressions = Lists.newArrayList();
+    private final List<Consumer<B>> builderAdjustments = Lists.newArrayList();
 
     abstract protected P getParent();
 
+    public P builder(Consumer<B> builder) {
+        builderAdjustments.add(builder);
+        return getParent();
+    }
+
     @Override
     public P conditionExpression(String expression) {
-        checkState(!built);
         conditionExpressions.add(expression);
         return getParent();
     }
@@ -63,49 +69,42 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P conditionExists() {
-        checkState(!built);
         conditionExpressions.add("attribute_exists(" + fieldMapping(schema.partitionKeyName()) + ")");
         return getParent();
     }
 
     @Override
     public P conditionNotExists() {
-        checkState(!built);
         conditionExpressions.add("attribute_not_exists(" + fieldMapping(schema.partitionKeyName()) + ")");
         return getParent();
     }
 
     @Override
     public P conditionFieldEquals(String fieldName, Object objectOther) {
-        checkState(!built);
         conditionExpressions.add(fieldMapping(fieldName) + " = " + valueMapping(fieldName, objectOther));
         return getParent();
     }
 
     @Override
     public P conditionFieldNotEquals(String fieldName, Object objectOther) {
-        checkState(!built);
         conditionExpressions.add(fieldMapping(fieldName) + " <> " + valueMapping(fieldName, objectOther));
         return getParent();
     }
 
     @Override
     public P conditionFieldExists(String fieldName) {
-        checkState(!built);
         conditionExpressions.add("attribute_exists(" + fieldMapping(fieldName) + ")");
         return getParent();
     }
 
     @Override
     public P conditionFieldNotExists(String fieldName) {
-        checkState(!built);
         conditionExpressions.add("attribute_not_exists(" + fieldMapping(fieldName) + ")");
         return getParent();
     }
 
     @Override
     public P updateExpression(String expression) {
-        checkState(!built);
         setUpdates.put(expression, expression);
         return getParent();
     }
@@ -138,7 +137,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P set(String fieldName, Object object) {
-        checkState(!built);
         checkState(!setUpdates.containsKey(fieldName));
         setUpdates.put(fieldName,
                 fieldMapping(fieldName) + " = " + valueMapping(fieldName, object));
@@ -147,7 +145,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P set(ImmutableList<String> fieldPath, AttributeValue value) {
-        checkState(!built);
         checkArgument(!fieldPath.isEmpty());
         String fieldMapping = fieldMapping(fieldPath);
         checkState(!addUpdates.containsKey(fieldMapping));
@@ -158,7 +155,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P setIncrement(String fieldName, Number increment) {
-        checkState(!built);
         checkState(!setUpdates.containsKey(fieldName));
         setUpdates.put(fieldName, String.format("%s = if_not_exists(%s, %s) + %s",
                 fieldMapping(fieldName),
@@ -170,7 +166,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P add(String fieldName, Object object) {
-        checkState(!built);
         checkState(!addUpdates.containsKey(fieldName));
         addUpdates.put(fieldName,
                 fieldMapping(fieldName) + " " + valueMapping(fieldName, object));
@@ -179,7 +174,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P add(ImmutableList<String> fieldPath, AttributeValue value) {
-        checkState(!built);
         checkArgument(!fieldPath.isEmpty());
         String fieldMapping = fieldMapping(fieldPath);
         checkState(!addUpdates.containsKey(fieldMapping));
@@ -190,7 +184,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P remove(String fieldName) {
-        checkState(!built);
         checkState(!removeUpdates.containsKey(fieldName));
         removeUpdates.put(fieldName, fieldMapping(fieldName));
         return getParent();
@@ -198,7 +191,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P remove(ImmutableList<String> fieldPath) {
-        checkState(!built);
         checkArgument(!fieldPath.isEmpty());
         String fieldMapping = fieldMapping(fieldPath);
         checkState(!addUpdates.containsKey(fieldMapping));
@@ -208,7 +200,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public P delete(String fieldName, Object object) {
-        checkState(!built);
         checkState(!deleteUpdates.containsKey(fieldName));
         deleteUpdates.put(fieldName,
                 fieldMapping(fieldName) + " " + valueMapping(fieldName, object));
@@ -217,7 +208,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public String fieldMapping(String fieldName) {
-        checkState(!built);
         String mappedName = "#" + sanitizeFieldMapping(fieldName);
         nameMap.put(mappedName, fieldName);
         return mappedName;
@@ -232,7 +222,6 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public String fieldMapping(String fieldName, String fieldValue) {
-        checkState(!built);
         String mappedName = "#" + sanitizeFieldMapping(fieldName);
         nameMap.put(mappedName, fieldValue);
         return mappedName;
@@ -240,13 +229,11 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
 
     @Override
     public String valueMapping(String fieldName, Object object) {
-        checkState(!built);
         return constantMapping(fieldName, object);
     }
 
     @Override
     public String constantMapping(String name, Object object) {
-        checkState(!built);
         String mappedName = ":" + sanitizeFieldMapping(name);
         AttributeValue value = schema.toAttrValue(object);
         valMap.put(mappedName, value);
@@ -260,8 +247,7 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
                 .collect(Collectors.joining("X")), value);
     }
 
-    protected Expression buildExpression() {
-        built = true;
+    protected Expression<B> buildExpression() {
         ArrayList<String> updates = Lists.newArrayList();
         if (!setUpdates.isEmpty()) {
             updates.add("SET " + String.join(", ", setUpdates.values()));
@@ -279,6 +265,7 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
         final Optional<String> conditionOpt = Optional.ofNullable(Strings.emptyToNull(String.join(" AND ", conditionExpressions)));
         final Optional<ImmutableMap<String, String>> nameImmutableMapOpt = nameMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(nameMap));
         final Optional<ImmutableMap<String, AttributeValue>> valImmutableMapOpt = valMap.isEmpty() ? Optional.empty() : Optional.of(ImmutableMap.copyOf(valMap));
+        final ImmutableList<Consumer<B>> immutableBuilderAdjustments = ImmutableList.copyOf(builderAdjustments);
         log.trace("Built dynamo expression: update {} condition {} nameMap {} valKeys {}",
                 updateOpt, conditionOpt, nameImmutableMapOpt, valImmutableMapOpt.map(ImmutableMap::keySet));
         return new Expression() {
@@ -306,6 +293,11 @@ public abstract class ExpressionBuilder<T, P> implements Mappings, UpdateExpress
             @Override
             public Optional<ImmutableMap<String, AttributeValue>> expressionAttributeValues() {
                 return valImmutableMapOpt;
+            }
+
+            @Override
+            public ImmutableList<Consumer<B>> builderAdjustments() {
+                return immutableBuilderAdjustments;
             }
 
             @Override

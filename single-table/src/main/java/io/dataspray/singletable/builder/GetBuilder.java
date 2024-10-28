@@ -11,7 +11,7 @@ import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkState;
 
-public class GetBuilder<T> extends ExpressionBuilder<T, GetBuilder<T>> {
+public class GetBuilder<T> extends ExpressionBuilder<T, GetBuilder<T>, GetItemRequest.Builder> {
 
     public GetBuilder(Schema<T> schema) {
         super(schema);
@@ -24,15 +24,18 @@ public class GetBuilder<T> extends ExpressionBuilder<T, GetBuilder<T>> {
     private Optional<Map<String, AttributeValue>> keyOpt = Optional.empty();
 
     public GetBuilder<T> key(Map<String, Object> primaryKey) {
-        checkState(!built);
         this.keyOpt = Optional.of(schema.primaryKey(primaryKey));
         return this;
     }
 
     public GetItemRequest.Builder builder() {
+        Expression<GetItemRequest.Builder> expression = buildExpression();
         GetItemRequest.Builder builder = GetItemRequest.builder();
         builder.tableName(schema.tableName());
+        checkState(expression.updateExpression().isEmpty(), "Delete does not support update expression");
+        checkState(expression.conditionExpression().isEmpty(), "Delete does not support condition/filter expression");
         keyOpt.ifPresent(builder::key);
+        expression.builderAdjustments().forEach(c -> c.accept(builder));
         return builder;
     }
 

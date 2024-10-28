@@ -4,14 +4,14 @@ import com.google.common.collect.ImmutableSet;
 import io.dataspray.singletable.ExpressionBuilder;
 import io.dataspray.singletable.Schema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ReturnValue;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.util.Map;
 import java.util.Optional;
 
-import static com.google.common.base.Preconditions.checkState;
-
-public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>> implements ConditionExpressionBuilder<UpdateBuilder<T>>, UpdateExpressionBuilder<T, UpdateBuilder<T>> {
+public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>, UpdateItemRequest.Builder> implements ConditionExpressionBuilder<UpdateBuilder<T>>, UpdateExpressionBuilder<T, UpdateBuilder<T>> {
 
     public UpdateBuilder(Schema<T> schema) {
         super(schema);
@@ -24,22 +24,19 @@ public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>> imp
     private Optional<Map<String, AttributeValue>> keyOpt = Optional.empty();
 
     public UpdateBuilder<T> key(Map<String, Object> primaryKey) {
-        checkState(!built);
         this.keyOpt = Optional.of(schema.primaryKey(primaryKey));
         return this;
     }
 
-
     @Override
     public UpdateBuilder<T> upsert(T item, ImmutableSet<String> skipFieldNames) {
-        checkState(!built);
         this.keyOpt = Optional.of(schema.primaryKey(item));
         return super.upsert(item, skipFieldNames);
     }
 
 
     public UpdateItemRequest.Builder builder() {
-        Expression expression = buildExpression();
+        Expression<UpdateItemRequest.Builder> expression = buildExpression();
         UpdateItemRequest.Builder builder = UpdateItemRequest.builder();
         builder.tableName(schema.tableName());
         expression.updateExpression().ifPresent(builder::updateExpression);
@@ -47,6 +44,7 @@ public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>> imp
         expression.expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
         expression.expressionAttributeValues().ifPresent(builder::expressionAttributeValues);
         keyOpt.ifPresent(builder::key);
+        expression.builderAdjustments().forEach(c -> c.accept(builder));
         return builder;
     }
 

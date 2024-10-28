@@ -34,9 +34,9 @@ Account account = new Account("8426", "matus@example.com", null);
 schema.put().item(account).execute(client);
 
 // Fetch other account
-Optional<Account> otherAccountOpt = Optional.ofNullable(schema.fromAttrMap(
-        dynamo.getItem(schema.get().key(schema.primaryKey(Map
-                .of("accountId", "9473"))).build()).item()));
+Optional<Account> otherAccountOpt = schema.get()
+        .key(Map.of("accountId", "abc-9473"))
+        .execute(client);
 ```
 
 Okay, it could be simpler...
@@ -99,7 +99,7 @@ Note you need to indicate how many LSIs and GSIs you would like to create. This 
 your schemas. But don't worry you can always add more later.
 
 ```java
-singleTable.createTableIfNotExists(dynamo, 2, 2);
+singleTable.createTableIfNotExists(client, 2, 2);
 ```
 
 #### Via CDK
@@ -110,7 +110,7 @@ Alternatively, you can create the DynamoDB table and all indexes via AWS CDK sta
 singleTable.createCdkTable(this, "my-stack-name", 2, 2);
 ```
 
-### Insert an item
+### Put an item
 
 ```java
 schema.put()
@@ -118,7 +118,23 @@ schema.put()
         .execute(client);
 ```
 
-### Put with condition builder
+### Get an item
+
+```java
+Optional<Account> accountOpt = schema.get()
+        .key(Map.of("accountId", "12345"))
+        .execute(client);
+```
+
+### Delete an item
+
+```java
+Optional<Account> deletedAccountOpt = schema.delete()
+        .key(Map.of("accountId", "12345"))
+        .execute(client);
+```
+
+### Update with conditions
 
 ```java
 Optional<Account> updatedAccountOpt = schema.update()
@@ -140,14 +156,6 @@ Optional<Account> updatedAccountOpt = schema.update()
         .execute(client);
 ```
 
-### Get an item
-
-```java
-Optional<Account> accountOpt = schema.get()
-        .key(Map.of("accountId", "12345"))
-        .execute(client);
-```
-
 ### Query ranges with paging
 
 In this example, we will be querying all range keys for a given partition key.
@@ -159,15 +167,15 @@ using `withExclusiveStartKey` to continue quering where we left off.
 Optional<String> cursor = Optional.empty();
 do {
     // Prepare request
-    QueryRequest.Builder builder = schema.query()
+    QueryBuilder<Account> builder = schema.query()
             // Query by partition key
-            .keyConditions(Map.of("partitionKey", "partitionKey"))
-            .builder()
-            .limit(2);
-    cursor.ifPresent(exclusiveStartKey -> builder.exclusiveStartKey(schema.toExclusiveStartKey(exclusiveStartKey)));
+            .keyConditionsEqualsPrimaryKey(Map.of("accountId", "12345"))
+            .builder(b -> b.limit(2));
+    cursor.ifPresent(exclusiveStartKey -> builder.builder(b -> b
+            .exclusiveStartKey(schema.toExclusiveStartKey(exclusiveStartKey))));
 
     // Perform request
-    QueryResponse response = client.query(builder.build());
+    QueryResponse response = builder.execute(client);
 
     // Retrieve next cursor
     cursor = schema.serializeLastEvaluatedKey(response.lastEvaluatedKey());
@@ -186,7 +194,7 @@ iterate over all the dogs.
 
 One way to do this is using a DynamoDB technique
 called [sharding](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-sharding.html). To
-apply this technique to our Cats, instead of having a `catId` as the parition key, we will instead have `cat-XXX` where
+apply this technique to our Cats, instead of having a `catId` as the partition key, we will instead have `cat-XXX` where
 XXX will be a deterministic shard partition number based on the `catId`. The `catId` will be stored as a range key
 instead.
 
@@ -213,7 +221,7 @@ schema.put()
 // Retrieving cat is also same as before
 Optional<Cat> catOpt = schema.get()
         .key(Map.of("catId", catId))
-        .execute(dynamo);
+        .execute(client);
 
 // Finally let's dump all our cats using pagination
 Optional<String> cursorOpt = Optional.empty();

@@ -10,7 +10,7 @@ import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkState;
 
-public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>> implements ConditionExpressionBuilder<PutBuilder<T>> {
+public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>, PutItemRequest.Builder> implements ConditionExpressionBuilder<PutBuilder<T>> {
 
     public PutBuilder(Schema<T> schema) {
         super(schema);
@@ -23,13 +23,12 @@ public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>> implement
     private Optional<T> itemOpt = Optional.empty();
 
     public PutBuilder<T> item(T item) {
-        checkState(!built);
         this.itemOpt = Optional.of(item);
         return this;
     }
 
     public PutItemRequest.Builder builder() {
-        Expression expression = buildExpression();
+        Expression<PutItemRequest.Builder> expression = buildExpression();
         PutItemRequest.Builder builder = PutItemRequest.builder();
         builder.tableName(schema.tableName());
         checkState(expression.updateExpression().isEmpty(), "Put does not support update expression");
@@ -37,6 +36,7 @@ public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>> implement
         expression.expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
         expression.expressionAttributeValues().ifPresent(builder::expressionAttributeValues);
         itemOpt.ifPresent(item -> builder.item(schema.toAttrMap(item)));
+        expression.builderAdjustments().forEach(c -> c.accept(builder));
         return builder;
     }
 
