@@ -55,9 +55,14 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     @Override
+    public String getTableName() {
+        return getTableOrIndexName(Primary, -1);
+    }
+
+    @Override
     public software.amazon.awscdk.services.dynamodb.Table createCdkTable(Construct scope, String stackId, int lsiCount, int gsiCount) {
         software.amazon.awscdk.services.dynamodb.Table table = software.amazon.awscdk.services.dynamodb.Table.Builder.create(scope, stackId + "-singletable-table")
-                .tableName(getTableOrIndexName(Primary, -1))
+                .tableName(getTableName())
                 .partitionKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
                         .name(getPartitionKeyName(Primary, -1)).type(AttributeType.STRING).build())
                 .sortKey(software.amazon.awscdk.services.dynamodb.Attribute.builder()
@@ -94,7 +99,7 @@ class DynamoMapperImpl implements DynamoMapper {
 
     @Override
     public void createTableIfNotExists(DynamoDbClient dynamo, int lsiCount, int gsiCount) {
-        String tableName = getTableOrIndexName(Primary, -1);
+        String tableName = getTableName();
         boolean tableExists;
         boolean tableTtlExists;
         try {

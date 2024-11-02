@@ -8,6 +8,8 @@ import software.constructs.Construct;
 
 public interface DynamoMapper {
 
+    String getTableName();
+
     Table createCdkTable(Construct scope, String stackId, int lsiCount, int gsiCount);
 
     void createTableIfNotExists(DynamoDbClient dynamo, int lsiCount, int gsiCount);

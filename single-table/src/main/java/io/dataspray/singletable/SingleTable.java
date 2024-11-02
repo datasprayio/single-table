@@ -38,6 +38,11 @@ public class SingleTable implements DynamoMapper {
     }
 
     @Override
+    public String getTableName() {
+        return mapper.getTableName();
+    }
+
+    @Override
     public Table createCdkTable(Construct scope, String stackId, int lsiCount, int gsiCount) {
         return mapper.createCdkTable(scope, stackId, lsiCount, gsiCount);
     }
