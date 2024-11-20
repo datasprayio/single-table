@@ -41,7 +41,7 @@ public class ReadmeTest extends AbstractDynamoTest {
 
         // Initialize schema
         SingleTable singleTable = SingleTable.builder()
-                .tablePrefix(tablePrefix).build();
+                .tableName(tableName).build();
         TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
 
         // Insert new account
@@ -59,7 +59,7 @@ public class ReadmeTest extends AbstractDynamoTest {
         DynamoDbClient dynamo = client;
 
         SingleTable singleTable = SingleTable.builder()
-                .tablePrefix(tablePrefix)
+                .tableName(tableName)
                 .build();
         TableSchema<Account> accountSchema = singleTable.parseTableSchema(Account.class);
         IndexSchema<Account> accountByApiKeySchema = singleTable.parseGlobalSecondaryIndexSchema(1, Account.class);

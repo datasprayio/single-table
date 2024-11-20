@@ -22,6 +22,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
 import software.constructs.Construct;
 
+import javax.annotation.Nullable;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.Map.Entry;
@@ -37,7 +38,8 @@ import static io.dataspray.singletable.TableType.*;
 
 @Slf4j
 class DynamoMapperImpl implements DynamoMapper {
-    private final String tablePrefix;
+    private final String tableName;
+    private final String indexPrefix;
     private final Gson gson;
     private final Converters converters;
     private final MarshallerAttrVal gsonMarshallerAttrVal;
@@ -45,8 +47,9 @@ class DynamoMapperImpl implements DynamoMapper {
     @VisibleForTesting
     final Map<String, DynamoTable> rangePrefixToDynamoTable;
 
-    DynamoMapperImpl(String tablePrefix, Gson gson) {
-        this.tablePrefix = tablePrefix;
+    DynamoMapperImpl(@Nullable String tableName, @Nullable String tablePrefix, Gson gson) {
+        this.tableName = tableName != null ? tableName : tablePrefix + Primary.name().toLowerCase();
+        this.indexPrefix = tableName != null ? tableName : tablePrefix;
         this.gson = gson;
         this.converters = DynamoConvertersProxy.proxy();
         this.gsonMarshallerAttrVal = o -> AttributeValue.fromS(gson.toJson(o));
@@ -221,9 +224,9 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     private String getTableOrIndexName(TableType type, long indexNumber) {
-        return tablePrefix + (type == Primary
-                ? type.name().toLowerCase()
-                : type.name().toLowerCase() + indexNumber);
+        return type == Primary
+                ? tableName
+                : (indexPrefix + type.name().toLowerCase() + indexNumber);
     }
 
     private String getPartitionKeyName(TableType type, long indexNumber) {

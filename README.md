@@ -26,7 +26,7 @@ class Account {
 
 // Initialize schema
 SingleTable singleTable = SingleTable.builder()
-        .tablePrefix("project").build();
+        .tableName("project").build();
 TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
 
 // Insert new account
@@ -82,7 +82,7 @@ In our examples, we skip the steps of initializing `SingleTable` and parsing our
 
 ```java
 SingleTable singleTable = SingleTable.builder()
-    .tablePrefix("project")
+    .tableName("project")
     .build();
 TableSchema<Account> accountSchema = singleTable.parseTableSchema(Account.class);
 IndexSchema<Account> accountByApiKeySchema = singleTable.parseGlobalSecondaryIndexSchema(1, Account.class);

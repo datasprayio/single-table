@@ -4,16 +4,17 @@ package io.dataspray.singletable;
 
 import com.dampcake.gson.immutable.ImmutableAdapterFactory;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import lombok.Builder;
-import lombok.NonNull;
 import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.constructs.Construct;
 
+import javax.annotation.Nullable;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -27,13 +28,16 @@ public class SingleTable implements DynamoMapper {
     DynamoUtil util;
 
     @Builder
-    private SingleTable(@NonNull String tablePrefix, Gson overrideGson) {
+    private SingleTable(@Nullable String tableName, @Deprecated @Nullable String tablePrefix, Gson overrideGson) {
+        if (Strings.isNullOrEmpty(tablePrefix) == Strings.isNullOrEmpty(tableName)) {
+            throw new RuntimeException("Must specify either tableName or tablePrefix");
+        }
         Gson gson = overrideGson != null ? overrideGson : new GsonBuilder()
                 .setFieldNamingPolicy(FieldNamingPolicy.IDENTITY)
                 .disableHtmlEscaping()
                 .registerTypeAdapterFactory(ImmutableAdapterFactory.forGuava())
                 .create();
-        this.mapper = new DynamoMapperImpl(tablePrefix, gson);
+        this.mapper = new DynamoMapperImpl(tableName, tablePrefix, gson);
         this.util = new DynamoUtil();
     }
 

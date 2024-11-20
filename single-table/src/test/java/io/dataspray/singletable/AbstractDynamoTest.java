@@ -9,7 +9,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import java.util.UUID;
 
 public class AbstractDynamoTest {
-    protected final String tablePrefix = "test-" + UUID.randomUUID();
+    protected final String tableName = "test-" + UUID.randomUUID();
     protected DynamoDbClient client;
     protected DynamoMapperImpl mapper;
     protected SingleTable singleTable;
@@ -19,7 +19,7 @@ public class AbstractDynamoTest {
     public void setupDynamoTest() {
         client = new InMemoryDynamoDbProvider().get();
         singleTable = SingleTable.builder()
-                .tablePrefix(tablePrefix)
+                .tableName(tableName)
                 .build();
         mapper = singleTable.mapper;
         util = singleTable.util;
