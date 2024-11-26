@@ -8,7 +8,6 @@
         <option value="$PROJECT_DIR$/dynamo-single-table-schema/pom.xml" />
       </list>
     </option>
-    <option name="workspaceImportForciblyTurnedOn" value="true" />
   </component>
   <component name="ProjectRootManager" version="2" languageLevel="JDK_11" default="true" project-jdk-name="corretto-11 (3)" project-jdk-type="JavaSDK" />
 </project>
