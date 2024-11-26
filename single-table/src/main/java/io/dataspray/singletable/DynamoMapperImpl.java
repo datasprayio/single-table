@@ -107,65 +107,61 @@ class DynamoMapperImpl implements DynamoMapper {
     @Override
     public void createTableIfNotExists(int lsiCount, int gsiCount) {
         String tableName = getTableOrIndexName(Primary, -1);
-        boolean tableExists;
-        boolean tableTtlExists;
-        try {
-            DescribeTimeToLiveResult timeToLiveResult = dynamo.describeTimeToLive(new DescribeTimeToLiveRequest()
-                    .withTableName(tableName));
-            tableExists = true;
-            tableTtlExists = (TimeToLiveStatus.ENABLED.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus())
-                    || TimeToLiveStatus.ENABLING.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus()))
-                    && SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME.equals(timeToLiveResult.getTimeToLiveDescription().getAttributeName());
-        } catch (ResourceNotFoundException ex) {
-            tableExists = false;
-            tableTtlExists = false;
+
+        ArrayList<KeySchemaElement> primaryKeySchemas = Lists.newArrayList();
+        ArrayList<AttributeDefinition> primaryAttributeDefinitions = Lists.newArrayList();
+        ArrayList<LocalSecondaryIndex> localSecondaryIndexes = Lists.newArrayList();
+        ArrayList<GlobalSecondaryIndex> globalSecondaryIndexes = Lists.newArrayList();
+
+        primaryKeySchemas.add(new KeySchemaElement(getPartitionKeyName(Primary, -1), KeyType.HASH));
+        primaryAttributeDefinitions.add(new AttributeDefinition(getPartitionKeyName(Primary, -1), ScalarAttributeType.S));
+        primaryKeySchemas.add(new KeySchemaElement(getRangeKeyName(Primary, -1), KeyType.RANGE));
+        primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Primary, -1), ScalarAttributeType.S));
+
+        LongStream.range(1, lsiCount + 1).forEach(indexNumber -> {
+            localSecondaryIndexes.add(new LocalSecondaryIndex()
+                    .withIndexName(getTableOrIndexName(Lsi, indexNumber))
+                    .withProjection(new Projection().withProjectionType(ProjectionType.ALL))
+                    .withKeySchema(ImmutableList.of(
+                            new KeySchemaElement(getPartitionKeyName(Lsi, indexNumber), KeyType.HASH),
+                            new KeySchemaElement(getRangeKeyName(Lsi, indexNumber), KeyType.RANGE))));
+            primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Lsi, indexNumber), ScalarAttributeType.S));
+        });
+
+        LongStream.range(1, gsiCount + 1).forEach(indexNumber -> {
+            globalSecondaryIndexes.add(new GlobalSecondaryIndex()
+                    .withIndexName(getTableOrIndexName(Gsi, indexNumber))
+                    .withProjection(new Projection().withProjectionType(ProjectionType.ALL))
+                    .withKeySchema(ImmutableList.of(
+                            new KeySchemaElement(getPartitionKeyName(Gsi, indexNumber), KeyType.HASH),
+                            new KeySchemaElement(getRangeKeyName(Gsi, indexNumber), KeyType.RANGE))));
+            primaryAttributeDefinitions.add(new AttributeDefinition(getPartitionKeyName(Gsi, indexNumber), ScalarAttributeType.S));
+            primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Gsi, indexNumber), ScalarAttributeType.S));
+        });
+
+        CreateTableRequest createTableRequest = new CreateTableRequest()
+                .withTableName(tableName)
+                .withKeySchema(primaryKeySchemas)
+                .withAttributeDefinitions(primaryAttributeDefinitions)
+                .withBillingMode(BillingMode.PAY_PER_REQUEST);
+        if (!localSecondaryIndexes.isEmpty()) {
+            createTableRequest.withLocalSecondaryIndexes(localSecondaryIndexes);
         }
-        if (!tableExists) {
-            ArrayList<KeySchemaElement> primaryKeySchemas = Lists.newArrayList();
-            ArrayList<AttributeDefinition> primaryAttributeDefinitions = Lists.newArrayList();
-            ArrayList<LocalSecondaryIndex> localSecondaryIndexes = Lists.newArrayList();
-            ArrayList<GlobalSecondaryIndex> globalSecondaryIndexes = Lists.newArrayList();
-
-            primaryKeySchemas.add(new KeySchemaElement(getPartitionKeyName(Primary, -1), KeyType.HASH));
-            primaryAttributeDefinitions.add(new AttributeDefinition(getPartitionKeyName(Primary, -1), ScalarAttributeType.S));
-            primaryKeySchemas.add(new KeySchemaElement(getRangeKeyName(Primary, -1), KeyType.RANGE));
-            primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Primary, -1), ScalarAttributeType.S));
-
-            LongStream.range(1, lsiCount + 1).forEach(indexNumber -> {
-                localSecondaryIndexes.add(new LocalSecondaryIndex()
-                        .withIndexName(getTableOrIndexName(Lsi, indexNumber))
-                        .withProjection(new Projection().withProjectionType(ProjectionType.ALL))
-                        .withKeySchema(ImmutableList.of(
-                                new KeySchemaElement(getPartitionKeyName(Lsi, indexNumber), KeyType.HASH),
-                                new KeySchemaElement(getRangeKeyName(Lsi, indexNumber), KeyType.RANGE))));
-                primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Lsi, indexNumber), ScalarAttributeType.S));
-            });
-
-            LongStream.range(1, gsiCount + 1).forEach(indexNumber -> {
-                globalSecondaryIndexes.add(new GlobalSecondaryIndex()
-                        .withIndexName(getTableOrIndexName(Gsi, indexNumber))
-                        .withProjection(new Projection().withProjectionType(ProjectionType.ALL))
-                        .withKeySchema(ImmutableList.of(
-                                new KeySchemaElement(getPartitionKeyName(Gsi, indexNumber), KeyType.HASH),
-                                new KeySchemaElement(getRangeKeyName(Gsi, indexNumber), KeyType.RANGE))));
-                primaryAttributeDefinitions.add(new AttributeDefinition(getPartitionKeyName(Gsi, indexNumber), ScalarAttributeType.S));
-                primaryAttributeDefinitions.add(new AttributeDefinition(getRangeKeyName(Gsi, indexNumber), ScalarAttributeType.S));
-            });
-
-            CreateTableRequest createTableRequest = new CreateTableRequest()
-                    .withTableName(tableName)
-                    .withKeySchema(primaryKeySchemas)
-                    .withAttributeDefinitions(primaryAttributeDefinitions)
-                    .withBillingMode(BillingMode.PAY_PER_REQUEST);
-            if (!localSecondaryIndexes.isEmpty()) {
-                createTableRequest.withLocalSecondaryIndexes(localSecondaryIndexes);
-            }
-            if (!globalSecondaryIndexes.isEmpty()) {
-                createTableRequest.withGlobalSecondaryIndexes(globalSecondaryIndexes);
-            }
+        if (!globalSecondaryIndexes.isEmpty()) {
+            createTableRequest.withGlobalSecondaryIndexes(globalSecondaryIndexes);
+        }
+        try {
             dynamoDoc.createTable(createTableRequest);
             log.info("Table {} created", tableName);
+        } catch (ResourceInUseException ex) {
+            log.trace("Table {} already exists", tableName);
         }
+
+        DescribeTimeToLiveResult timeToLiveResult = dynamo.describeTimeToLive(new DescribeTimeToLiveRequest()
+                .withTableName(tableName));
+        boolean tableTtlExists = (TimeToLiveStatus.ENABLED.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus())
+                || TimeToLiveStatus.ENABLING.name().equals(timeToLiveResult.getTimeToLiveDescription().getTimeToLiveStatus()))
+                && SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME.equals(timeToLiveResult.getTimeToLiveDescription().getAttributeName());
         if (!tableTtlExists) {
             dynamo.updateTimeToLive(new UpdateTimeToLiveRequest()
                     .withTableName(tableName)
