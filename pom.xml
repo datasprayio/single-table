@@ -4,7 +4,7 @@
 
     <groupId>io.dataspray</groupId>
     <artifactId>single-table-parent</artifactId>
-    <version>0.0.12</version>
+    <version>0.0.12-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>Single Table Parent</name>
@@ -30,7 +30,7 @@
         <connection>scm:git:git@github.com:datasprayio/single-table.git</connection>
         <developerConnection>scm:git:git@github.com:datasprayio/single-table.git</developerConnection>
         <url>https://github.com/datasprayio/single-table</url>
-        <tag>0.0.12</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <modules>
