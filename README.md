@@ -32,7 +32,7 @@ TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
 // Insert new account
 Account account = schema.put()
         .item(new Account("8426", "matus@example.com", null))
-        .executeGetUpdated(client);
+        .executeGetNew(client);
 
 // Fetch other account
 Optional<Account> otherAccountOpt = schema.get()
@@ -138,7 +138,7 @@ Optional<Account> deletedAccountOpt = schema.delete()
 ### Update with conditions
 
 ```java
-Optional<Account> updatedAccountOpt = schema.update()
+Account updatedAccount = schema.update()
         .key(Map.of("accountId", "12345"))
 
         // Apply conditions

@@ -86,7 +86,7 @@ public class ReadmeTest extends AbstractDynamoTest {
 
         // ---------
 
-        Optional<Account> updatedAccountOpt = schema.update()
+        Account updatedAccount = schema.update()
                 .key(Map.of("accountId", "1234fsd432e5"))
 
                 // Apply conditions
