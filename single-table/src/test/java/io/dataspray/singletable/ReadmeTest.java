@@ -45,13 +45,14 @@ public class ReadmeTest extends AbstractDynamoTest {
         TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
 
         // Insert new account
-        Account account = new Account("8426", "matus@example.com", null);
-        schema.put().item(account).execute(client);
+        Account account = schema.put()
+                .item(new Account("8426", "matus@example.com", null))
+                .executeGetNew(client);
 
         // Fetch other account
         Optional<Account> otherAccountOpt = schema.get()
                 .key(Map.of("accountId", "abc-9473"))
-                .execute(client);
+                .executeGet(client);
     }
 
     @Test(timeout = 20_000L)
@@ -72,9 +73,9 @@ public class ReadmeTest extends AbstractDynamoTest {
 
         // ---------
 
-        schema.put()
+        Optional<Account> previousAccount = schema.put()
                 .item(account)
-                .execute(client);
+                .executeGetPrevious(client);
     }
 
     @Test(timeout = 20_000L)
@@ -100,7 +101,7 @@ public class ReadmeTest extends AbstractDynamoTest {
                 // Remove entry from a json field
                 //                .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
 
-                .execute(client);
+                .executeGetUpdated(client);
     }
 
     @Test(timeout = 20_000L)
@@ -111,7 +112,7 @@ public class ReadmeTest extends AbstractDynamoTest {
 
         Optional<Account> accountOpt = schema.get()
                 .key(Map.of("accountId", "12345"))
-                .execute(client);
+                .executeGet(client);
     }
 
     @Test(timeout = 20_000L)
@@ -122,7 +123,7 @@ public class ReadmeTest extends AbstractDynamoTest {
 
         Optional<Account> deletedAccountOpt = schema.delete()
                 .key(Map.of("accountId", "12345"))
-                .execute(client);
+                .executeGetDeleted(client);
     }
 
     @FunctionalInterface
@@ -189,7 +190,7 @@ public class ReadmeTest extends AbstractDynamoTest {
         // Retrieving cat is also same as before
         Optional<Cat> catOpt = schema.get()
                 .key(Map.of("catId", catId))
-                .execute(client);
+                .executeGet(client);
 
         // Finally let's dump all our cats using pagination
         Optional<String> cursorOpt = Optional.empty();

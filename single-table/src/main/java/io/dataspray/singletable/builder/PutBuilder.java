@@ -5,6 +5,7 @@ import io.dataspray.singletable.Schema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.ReturnValue;
 
 import java.util.Optional;
 
@@ -35,7 +36,8 @@ public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>, PutItemRe
         expression.conditionExpression().ifPresent(builder::conditionExpression);
         expression.expressionAttributeNames().ifPresent(builder::expressionAttributeNames);
         expression.expressionAttributeValues().ifPresent(builder::expressionAttributeValues);
-        itemOpt.ifPresent(item -> builder.item(schema.toAttrMap(item)));
+        checkState(itemOpt.isPresent(), "Need to call item(...) first");
+        builder.item(schema.toAttrMap(itemOpt.get()));
         expression.builderAdjustments().forEach(c -> c.accept(builder));
         return builder;
     }
@@ -46,5 +48,17 @@ public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>, PutItemRe
 
     public PutItemResponse execute(DynamoDbClient dynamo) {
         return dynamo.putItem(build());
+    }
+
+    public T executeGetNew(DynamoDbClient dynamo) {
+        checkState(itemOpt.isPresent(), "Need to call item(...) first");
+        execute(dynamo);
+        return itemOpt.get();
+    }
+
+    public Optional<T> executeGetPrevious(DynamoDbClient dynamo) {
+        return Optional.ofNullable(schema.fromAttrMap(dynamo.putItem(builder()
+                .returnValues(ReturnValue.ALL_OLD)
+                .build()).attributes()));
     }
 }

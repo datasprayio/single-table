@@ -30,13 +30,14 @@ SingleTable singleTable = SingleTable.builder()
 TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
 
 // Insert new account
-Account account = new Account("8426", "matus@example.com", null);
-schema.put().item(account).execute(client);
+Account account = schema.put()
+        .item(new Account("8426", "matus@example.com", null))
+        .executeGetUpdated(client);
 
 // Fetch other account
 Optional<Account> otherAccountOpt = schema.get()
         .key(Map.of("accountId", "abc-9473"))
-        .execute(client);
+        .executeGet(client);
 ```
 
 Okay, it could be simpler...
@@ -113,9 +114,9 @@ singleTable.createCdkTable(this, "my-stack-name", 2, 2);
 ### Put an item
 
 ```java
-schema.put()
+Optional<Account> previousAccount = schema.put()
         .item(account)
-        .execute(client);
+        .executeGetPrevious(client);
 ```
 
 ### Get an item
@@ -123,7 +124,7 @@ schema.put()
 ```java
 Optional<Account> accountOpt = schema.get()
         .key(Map.of("accountId", "12345"))
-        .execute(client);
+        .executeGet(client);
 ```
 
 ### Delete an item
@@ -131,7 +132,7 @@ Optional<Account> accountOpt = schema.get()
 ```java
 Optional<Account> deletedAccountOpt = schema.delete()
         .key(Map.of("accountId", "12345"))
-        .execute(client);
+        .executeGetDeleted(client);
 ```
 
 ### Update with conditions
@@ -153,7 +154,7 @@ Optional<Account> updatedAccountOpt = schema.update()
         // Remove entry from a json field
         .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
 
-        .execute(client);
+        .executeGetUpdated(client);
 ```
 
 ### Query ranges with paging
@@ -221,7 +222,7 @@ schema.put()
 // Retrieving cat is also same as before
 Optional<Cat> catOpt = schema.get()
         .key(Map.of("catId", catId))
-        .execute(client);
+        .executeGet(client);
 
 // Finally let's dump all our cats using pagination
 Optional<String> cursorOpt = Optional.empty();

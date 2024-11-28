@@ -5,6 +5,7 @@ import io.dataspray.singletable.Schema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.DeleteItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.ReturnValue;
 
 import java.util.Map;
@@ -46,7 +47,11 @@ public class DeleteBuilder<T> extends ExpressionBuilder<T, DeleteBuilder<T>, Del
         return builder().build();
     }
 
-    public Optional<T> execute(DynamoDbClient dynamo) {
+    public DeleteItemResponse execute(DynamoDbClient dynamo) {
+        return dynamo.deleteItem(build());
+    }
+
+    public Optional<T> executeGetDeleted(DynamoDbClient dynamo) {
         return Optional.ofNullable(schema.fromAttrMap(dynamo.deleteItem(builder()
                 .returnValues(ReturnValue.ALL_OLD)
                 .build()).attributes()));

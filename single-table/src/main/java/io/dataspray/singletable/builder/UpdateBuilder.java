@@ -7,6 +7,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ReturnValue;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemResponse;
 
 import java.util.Map;
 import java.util.Optional;
@@ -52,9 +53,19 @@ public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>, Upd
         return builder().build();
     }
 
-    public Optional<T> execute(DynamoDbClient dynamo) {
+    public UpdateItemResponse execute(DynamoDbClient dynamo) {
+        return dynamo.updateItem(build());
+    }
+
+    public Optional<T> executeGetUpdated(DynamoDbClient dynamo) {
         return Optional.ofNullable(schema.fromAttrMap(dynamo.updateItem(builder()
                 .returnValues(ReturnValue.ALL_NEW)
+                .build()).attributes()));
+    }
+
+    public Optional<T> executeGetPrevious(DynamoDbClient dynamo) {
+        return Optional.ofNullable(schema.fromAttrMap(dynamo.updateItem(builder()
+                .returnValues(ReturnValue.ALL_OLD)
                 .build()).attributes()));
     }
 }

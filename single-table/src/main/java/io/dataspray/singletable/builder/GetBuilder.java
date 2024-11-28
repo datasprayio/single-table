@@ -5,6 +5,7 @@ import io.dataspray.singletable.Schema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 
 import java.util.Map;
 import java.util.Optional;
@@ -43,7 +44,11 @@ public class GetBuilder<T> extends ExpressionBuilder<T, GetBuilder<T>, GetItemRe
         return builder().build();
     }
 
-    public Optional<T> execute(DynamoDbClient dynamo) {
+    public GetItemResponse execute(DynamoDbClient dynamo) {
+        return dynamo.getItem(build());
+    }
+
+    public Optional<T> executeGet(DynamoDbClient dynamo) {
         return Optional.ofNullable(schema.fromAttrMap(dynamo
                 .getItem(build())
                 .item()));
