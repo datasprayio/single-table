@@ -555,6 +555,24 @@ class DynamoMapperImpl implements DynamoMapper {
         }
     }
 
+    private Class getCollectionGeneric(Object object) {
+        if (Map.class.isAssignableFrom(object.getClass())) {
+            Map map = (Map) object;
+            if (map.isEmpty()) {
+                return Object.class;
+            } else {
+                return map.values().iterator().next().getClass();
+            }
+        } else {
+            Collection collection = (Collection) object;
+            if (collection.isEmpty()) {
+                return Object.class;
+            } else {
+                return collection.iterator().next().getClass();
+            }
+        }
+    }
+
     private MarshallerAttrVal findMarshallerAttrVal(Optional<Class> collectionClazz, Class itemClazz) {
         MarshallerAttrVal f = findInClassSet(itemClazz, converters.mp).orElse(gsonMarshallerAttrVal);
         if (collectionClazz.isPresent()) {
@@ -775,7 +793,9 @@ class DynamoMapperImpl implements DynamoMapper {
             if (object instanceof AttributeValue) {
                 return (AttributeValue) object;
             }
-            MarshallerAttrVal marshaller = findMarshallerAttrVal(Optional.empty(), object.getClass());
+            Optional<Class> collectionClazz = getCollectionClazz(object.getClass());
+            Class fieldClazz = collectionClazz.isPresent() ? getCollectionGeneric(object) : object.getClass();
+            MarshallerAttrVal marshaller = findMarshallerAttrVal(collectionClazz, fieldClazz);
             if (marshaller == null) {
                 throw new RuntimeException("Cannot find marshaller for " + object.getClass());
             }

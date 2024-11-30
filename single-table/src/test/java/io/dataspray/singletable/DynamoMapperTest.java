@@ -12,8 +12,10 @@ import org.junit.Test;
 import software.amazon.awssdk.services.dynamodb.model.*;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static io.dataspray.singletable.TableType.*;
@@ -223,5 +225,21 @@ public class DynamoMapperTest extends AbstractDynamoTest {
         assertEquals(ImmutableList.of(data3, data2, data1), singleTable.fetchShardNextPage(client, gsi, Optional.empty(), 3).getItems());
         assertEquals(ImmutableList.of(data3, data2), singleTable.fetchShardNextPage(client, gsi, Optional.empty(), 2).getItems());
         assertEquals(new ShardPageResult<>(ImmutableList.of(data1), Optional.empty()), singleTable.fetchShardNextPage(client, gsi, Optional.of("{\"s\":9,\"d\":{\"gsipk1\":\"shard-9\",\"gsisk1\":\"prefixDataShardedTestGsi:\\\"2-3\\\"\",\"sk\":\"prefixDataShardedTestPrimary:\\\"2-3\\\"\",\"pk\":\"\\\"2-2\\\":shard-1\"}}"), 2));
+    }
+
+
+    @Test(timeout = 20_000L)
+    public void testAttrVal() throws Exception {
+        TableSchema<DataSharded> primary = mapper.parseTableSchema(DataSharded.class);
+
+        assertEquals(AttributeValue.fromM(Map.of("A", AttributeValue.fromN("7"))),
+                primary.toAttrValue(Map.of("A", 7L)));
+        assertEquals(AttributeValue.fromM(Map.of()),
+                primary.toAttrValue(Map.of()));
+
+        assertEquals(AttributeValue.fromNs(List.of("7.0")),
+                primary.toAttrValue(Set.of(7d)));
+        assertEquals(null,
+                primary.toAttrValue(Set.of()));
     }
 }
