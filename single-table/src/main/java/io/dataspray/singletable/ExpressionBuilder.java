@@ -210,9 +210,7 @@ public abstract class ExpressionBuilder<T, P, B> implements Mappings, UpdateExpr
 
     @Override
     public String fieldMapping(String fieldName) {
-        String mappedName = "#" + sanitizeFieldMapping(fieldName);
-        nameMap.put(mappedName, fieldName);
-        return mappedName;
+        return fieldMapping(fieldName, fieldName);
     }
 
     @Override
@@ -225,6 +223,9 @@ public abstract class ExpressionBuilder<T, P, B> implements Mappings, UpdateExpr
     @Override
     public String fieldMapping(String fieldName, String fieldValue) {
         String mappedName = "#" + sanitizeFieldMapping(fieldName);
+        while (nameMap.containsKey(mappedName) && !nameMap.get(mappedName).equals(fieldName)) {
+            mappedName = mappedName + "_";
+        }
         nameMap.put(mappedName, fieldValue);
         return mappedName;
     }
@@ -238,6 +239,9 @@ public abstract class ExpressionBuilder<T, P, B> implements Mappings, UpdateExpr
     public String constantMapping(String name, Object object) {
         String mappedName = ":" + sanitizeFieldMapping(name);
         AttributeValue value = schema.toAttrValue(object);
+        while (valMap.containsKey(mappedName) && !valMap.get(mappedName).equals(value)) {
+            mappedName = mappedName + "_";
+        }
         valMap.put(mappedName, value);
         return mappedName;
     }
