@@ -15,6 +15,7 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.constructs.Construct;
 
 import javax.annotation.Nullable;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -28,7 +29,12 @@ public class SingleTable implements DynamoMapper {
     DynamoUtil util;
 
     @Builder
-    private SingleTable(@Nullable String tableName, @Deprecated @Nullable String tablePrefix, Gson overrideGson) {
+    private SingleTable(
+            @Nullable String tableName,
+            @Deprecated @Nullable String tablePrefix,
+            @Nullable Gson overrideGson,
+            @Nullable List<DynamoConvertersProxy.OverrideTypeConverter<?>> overrideTypeConverters,
+            @Nullable List<DynamoConvertersProxy.OverrideCollectionTypeConverter<?>> overrideCollectionTypeConverters) {
         if (Strings.isNullOrEmpty(tablePrefix) == Strings.isNullOrEmpty(tableName)) {
             throw new RuntimeException("Must specify either tableName or tablePrefix");
         }
@@ -37,7 +43,7 @@ public class SingleTable implements DynamoMapper {
                 .disableHtmlEscaping()
                 .registerTypeAdapterFactory(ImmutableAdapterFactory.forGuava())
                 .create();
-        this.mapper = new DynamoMapperImpl(tableName, tablePrefix, gson);
+        this.mapper = new DynamoMapperImpl(tableName, tablePrefix, gson, overrideTypeConverters, overrideCollectionTypeConverters);
         this.util = new DynamoUtil();
     }
 

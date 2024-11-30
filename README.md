@@ -265,3 +265,111 @@ One way to retrieve a subset of records is to replicate them into a secondary in
 of a field.
 
 Currently there isn't a way to do this with this library, but would be fairly trivial to add, contributions are welcome.
+
+### Custom mapping of objects and collections
+
+By default, any unknown object is serialized and deserialized using GSON. If you'd like to override this functionality,
+you definitely can. This is especially useful if you want to have a structure that can be updated using update expressions.
+
+#### Custom object
+
+Let's say you have the following class:
+
+```java
+@Value
+@AllArgsConstructor
+static class MyClass {
+    @NonNull
+    String field1;
+    @NonNull
+    Long field2;
+}
+```
+
+Create a converter:
+
+```java
+class MyClassConverter implements OverrideTypeConverter<MyClass> {
+
+    @Override
+    public Class<?> getTypeClass() {
+        return MyClass.class;
+    }
+
+    @Override
+    public MyClass getDefaultInstance() {
+        return new MyClass("", 0L);
+    }
+
+    @Override
+    public AttributeValue marshall(MyClass myClass) {
+        return AttributeValue.fromM(Map.of(
+                "field1", AttributeValue.fromS(myClass.field1),
+                "field2", AttributeValue.fromN(myClass.field2.toString())
+        ));
+    }
+
+    @Override
+    public MyClass unmarshall(AttributeValue attributeValue) {
+        return new MyClass(
+                attributeValue.m().get("field1").s(),
+                Long.valueOf(attributeValue.m().get("field2").n()));
+    }
+}
+```
+
+And pass it along during Single Table creation:
+
+```java
+SingleTable singleTable = SingleTable.builder()
+        .tableName(tableName)
+        .overrideTypeConverters(List.of(new MyClassConverter()))
+        .build();
+```
+
+#### Custom collection
+
+Let's say you want to use a custom Map such as Guava's `BiMap`. Create a converter:
+
+```java
+class BiMapConverter implements OverrideCollectionTypeConverter<BiMap> {
+
+    @Override
+    public Class<?> getCollectionClass() {
+        return BiMap.class;
+    }
+
+    @Override
+    public AttributeValue marshall(BiMap object, DynamoConvertersProxy.MarshallerAttrVal<Object> marshaller) {
+        return object == null ? null : AttributeValue.fromM(((Map<?, ?>) object).entrySet().stream()
+                .collect(ImmutableBiMap.toImmutableBiMap(
+                        e -> (String) e.getKey(),
+                        e -> marshaller.marshall(e.getValue())
+                )));
+    }
+
+    @Override
+    public BiMap unmarshall(AttributeValue attributeValue, DynamoConvertersProxy.UnMarshallerAttrVal<Object> unMarshallerAttrVal) {
+        return attributeValue == null || Boolean.TRUE.equals(attributeValue.nul()) || !attributeValue.hasM() ? null : attributeValue.m().entrySet().stream()
+                .collect(ImmutableBiMap.toImmutableBiMap(
+                        Map.Entry::getKey,
+                        e -> unMarshallerAttrVal.unmarshall(e.getValue())
+                ));
+    }
+
+    @Override
+    public BiMap getDefaultInstance() {
+        return ImmutableBiMap.of();
+    }
+}
+```
+
+And pass it along during Single Table creation:
+
+```java
+SingleTable singleTable = SingleTable.builder()
+        .tableName(tableName)
+        .overrideCollectionTypeConverters(List.of(new BiMapConverter()))
+        .build();
+```
+

@@ -47,11 +47,19 @@ class DynamoMapperImpl implements DynamoMapper {
     @VisibleForTesting
     final Map<String, DynamoTable> rangePrefixToDynamoTable;
 
-    DynamoMapperImpl(@Nullable String tableName, @Nullable String tablePrefix, Gson gson) {
+    DynamoMapperImpl(
+            @Nullable String tableName,
+            @Nullable String tablePrefix,
+            Gson gson,
+            @Nullable List<OverrideTypeConverter<?>> overrideTypeConverters,
+            @Nullable List<OverrideCollectionTypeConverter<?>> overrideCollectionTypeConverters
+    ) {
         this.tableName = tableName != null ? tableName : tablePrefix + Primary.name().toLowerCase();
         this.indexPrefix = tableName != null ? tableName : tablePrefix;
         this.gson = gson;
-        this.converters = DynamoConvertersProxy.proxy();
+        this.converters = DynamoConvertersProxy.proxy(
+                overrideTypeConverters == null ? List.of() : overrideTypeConverters,
+                overrideCollectionTypeConverters == null ? List.of() : overrideCollectionTypeConverters);
         this.gsonMarshallerAttrVal = o -> AttributeValue.fromS(gson.toJson(o));
         this.gsonUnMarshallerAttrVal = k -> a -> gson.fromJson(a.s(), k);
         this.rangePrefixToDynamoTable = Maps.newHashMap();

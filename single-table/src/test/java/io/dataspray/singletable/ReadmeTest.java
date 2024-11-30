@@ -2,19 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
+import com.google.common.collect.BiMap;
+import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
+import io.dataspray.singletable.DynamoConvertersProxy.OverrideCollectionTypeConverter;
+import io.dataspray.singletable.DynamoConvertersProxy.OverrideTypeConverter;
 import io.dataspray.singletable.builder.QueryBuilder;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import static io.dataspray.singletable.TableType.Gsi;
 import static io.dataspray.singletable.TableType.Primary;
+import static org.junit.Assert.assertEquals;
 
 @Slf4j
 public class ReadmeTest extends AbstractDynamoTest {
@@ -226,5 +233,133 @@ public class ReadmeTest extends AbstractDynamoTest {
         schema.update()
                 .upsert(account.toBuilder().apiKey("new-key").build())
                 .execute(client);
+    }
+
+    @Value
+    @AllArgsConstructor
+    static class MyClass {
+        @NonNull
+        String field1;
+        @NonNull
+        Long field2;
+    }
+
+    @Value
+    @AllArgsConstructor
+    @DynamoTable(type = Primary, partitionKeys = "accountId", rangePrefix = "account")
+    static class MyClassHolder {
+        @NonNull
+        String accountId;
+
+        @NonNull
+        MyClass myClass;
+    }
+
+    @Test(timeout = 20_000L)
+    public void testCustomMarshaller() throws Exception {
+
+        class MyClassConverter implements OverrideTypeConverter<MyClass> {
+
+            @Override
+            public Class<?> getTypeClass() {
+                return MyClass.class;
+            }
+
+            @Override
+            public MyClass getDefaultInstance() {
+                return new MyClass("", 0L);
+            }
+
+            @Override
+            public AttributeValue marshall(MyClass myClass) {
+                return AttributeValue.fromM(Map.of(
+                        "field1", AttributeValue.fromS(myClass.field1),
+                        "field2", AttributeValue.fromN(myClass.field2.toString())
+                ));
+            }
+
+            @Override
+            public MyClass unmarshall(AttributeValue attributeValue) {
+                return new MyClass(
+                        attributeValue.m().get("field1").s(),
+                        Long.valueOf(attributeValue.m().get("field2").n()));
+            }
+        }
+
+        SingleTable singleTable = SingleTable.builder()
+                .tableName(tableName)
+                .overrideTypeConverters(List.of(new MyClassConverter()))
+                .build();
+
+        TableSchema<MyClassHolder> schema = singleTable.parseTableSchema(MyClassHolder.class);
+
+        MyClassHolder holder = schema.put()
+                .item(new MyClassHolder("123", new MyClass("asfd", 19L)))
+                .executeGetNew(client);
+        Optional<MyClassHolder> holderActualOpt = schema.get()
+                .key(Map.of("accountId", "123"))
+                .executeGet(client);
+        assertEquals(Optional.of(holder), holderActualOpt);
+    }
+
+    @Value
+    @AllArgsConstructor
+    @DynamoTable(type = Primary, partitionKeys = "accountId", rangePrefix = "account")
+    static class BiMapHolder {
+        @NonNull
+        String accountId;
+
+        @NonNull
+        BiMap<String, Long> map;
+    }
+
+    @Test(timeout = 20_000L)
+    public void testCustomCollectionMarshaller() throws Exception {
+
+        class BiMapConverter implements OverrideCollectionTypeConverter<BiMap> {
+
+            @Override
+            public Class<?> getCollectionClass() {
+                return BiMap.class;
+            }
+
+            @Override
+            public AttributeValue marshall(BiMap object, DynamoConvertersProxy.MarshallerAttrVal<Object> marshaller) {
+                return object == null ? null : AttributeValue.fromM(((Map<?, ?>) object).entrySet().stream()
+                        .collect(ImmutableBiMap.toImmutableBiMap(
+                                e -> (String) e.getKey(),
+                                e -> marshaller.marshall(e.getValue())
+                        )));
+            }
+
+            @Override
+            public BiMap unmarshall(AttributeValue attributeValue, DynamoConvertersProxy.UnMarshallerAttrVal<Object> unMarshallerAttrVal) {
+                return attributeValue == null || Boolean.TRUE.equals(attributeValue.nul()) || !attributeValue.hasM() ? null : attributeValue.m().entrySet().stream()
+                        .collect(ImmutableBiMap.toImmutableBiMap(
+                                Map.Entry::getKey,
+                                e -> unMarshallerAttrVal.unmarshall(e.getValue())
+                        ));
+            }
+
+            @Override
+            public BiMap getDefaultInstance() {
+                return ImmutableBiMap.of();
+            }
+        }
+
+        SingleTable singleTable = SingleTable.builder()
+                .tableName(tableName)
+                .overrideCollectionTypeConverters(List.of(new BiMapConverter()))
+                .build();
+
+        TableSchema<BiMapHolder> schema = singleTable.parseTableSchema(BiMapHolder.class);
+
+        BiMapHolder holder = schema.put()
+                .item(new BiMapHolder("123", ImmutableBiMap.of("a", 1L, "b", 2L)))
+                .executeGetNew(client);
+        Optional<BiMapHolder> holderActualOpt = schema.get()
+                .key(Map.of("accountId", "123"))
+                .executeGet(client);
+        assertEquals(Optional.of(holder), holderActualOpt);
     }
 }

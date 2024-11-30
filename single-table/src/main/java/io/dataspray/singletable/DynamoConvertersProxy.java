@@ -22,8 +22,6 @@ import java.util.stream.Stream;
 
 class DynamoConvertersProxy {
 
-    private static Converters convertersCache = null;
-
     @Value
     public static class Converters {
         /**
@@ -48,16 +46,24 @@ class DynamoConvertersProxy {
         public final ImmutableSet<Map.Entry<Class<?>, DefaultInstanceGetter>> di;
     }
 
-    public static Converters proxy() {
-        if (convertersCache != null) {
-            return convertersCache;
-        }
+    public static Converters proxy(List<OverrideTypeConverter<?>> overrideTypeConverters, List<OverrideCollectionTypeConverter<?>> overrideCollectionTypeConverters) {
 
         ImmutableMap.Builder<Class<?>, MarshallerAttrVal> mp = new ImmutableMap.Builder<>();
         ImmutableMap.Builder<Class<?>, UnMarshallerAttrVal> up = new ImmutableMap.Builder<>();
         ImmutableMap.Builder<Class<?>, CollectionMarshallerAttrVal> mc = new ImmutableMap.Builder<>();
         ImmutableMap.Builder<Class<?>, CollectionUnMarshallerAttrVal> uc = new ImmutableMap.Builder<>();
         ImmutableMap.Builder<Class<?>, DefaultInstanceGetter> di = new ImmutableMap.Builder<>();
+
+        for (OverrideTypeConverter<?> overrideTypeConverter : overrideTypeConverters) {
+            mp.put(overrideTypeConverter.getTypeClass(), overrideTypeConverter);
+            up.put(overrideTypeConverter.getTypeClass(), overrideTypeConverter);
+            di.put(overrideTypeConverter.getTypeClass(), overrideTypeConverter);
+        }
+        for (OverrideCollectionTypeConverter<?> overrideCollectionTypeConverter : overrideCollectionTypeConverters) {
+            mc.put(overrideCollectionTypeConverter.getCollectionClass(), overrideCollectionTypeConverter);
+            uc.put(overrideCollectionTypeConverter.getCollectionClass(), overrideCollectionTypeConverter);
+            di.put(overrideCollectionTypeConverter.getCollectionClass(), overrideCollectionTypeConverter);
+        }
 
         mp.put(Date.class, o -> AttributeValue.fromS(DateUtils.formatIso8601Date(((Date) o).toInstant())));
         di.put(Date.class, () -> new Date(0L));
@@ -175,7 +181,7 @@ class DynamoConvertersProxy {
                             } else if (v.nul() != null) {
                                 throw new IllegalStateException("Set cannot have null item");
                             } else {
-                                throw new IllegalStateException("Set of unsupported type: " + v.toString());
+                                throw new IllegalStateException("Set of unsupported type: " + v);
                             }
                         })
                         .collect(ImmutableSet.toImmutableSet());
@@ -208,38 +214,44 @@ class DynamoConvertersProxy {
             di.put(setClazz, ImmutableSet::of);
         });
 
-        convertersCache = new Converters(
+        return new Converters(
                 mp.build().entrySet(),
                 up.build().entrySet(),
                 mc.build().entrySet(),
                 uc.build().entrySet(),
                 di.build().entrySet());
-        return convertersCache;
     }
 
     @FunctionalInterface
-    public interface MarshallerAttrVal {
-        AttributeValue marshall(Object object);
+    public interface MarshallerAttrVal<T> {
+        AttributeValue marshall(T object);
     }
 
     @FunctionalInterface
-    public interface UnMarshallerAttrVal {
-        Object unmarshall(AttributeValue attributeValue);
+    public interface UnMarshallerAttrVal<T> {
+        T unmarshall(AttributeValue attributeValue);
     }
 
     @FunctionalInterface
-    public interface CollectionMarshallerAttrVal {
-        AttributeValue marshall(Object object, MarshallerAttrVal marshaller);
+    public interface CollectionMarshallerAttrVal<T> {
+        AttributeValue marshall(T object, MarshallerAttrVal<Object> marshaller);
     }
 
     @FunctionalInterface
-    public interface CollectionUnMarshallerAttrVal {
-        Object unmarshall(AttributeValue attributeValue, UnMarshallerAttrVal unMarshaller);
+    public interface CollectionUnMarshallerAttrVal<T> {
+        T unmarshall(AttributeValue attributeValue, UnMarshallerAttrVal<Object> unMarshaller);
     }
 
     @FunctionalInterface
-    public interface DefaultInstanceGetter {
-        Object getDefaultInstance();
+    public interface DefaultInstanceGetter<T> {
+        T getDefaultInstance();
     }
 
+    public interface OverrideTypeConverter<T> extends MarshallerAttrVal<T>, UnMarshallerAttrVal<T>, DefaultInstanceGetter<T> {
+        Class<?> getTypeClass();
+    }
+
+    public interface OverrideCollectionTypeConverter<T> extends CollectionMarshallerAttrVal<T>, CollectionUnMarshallerAttrVal<T>, DefaultInstanceGetter<T> {
+        Class<?> getCollectionClass();
+    }
 }
