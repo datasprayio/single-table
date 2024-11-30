@@ -144,10 +144,11 @@ public abstract class ExpressionBuilder<T, P, B> implements Mappings, UpdateExpr
     }
 
     @Override
-    public P set(ImmutableList<String> fieldPath, AttributeValue value) {
+    public P set(ImmutableList<String> fieldPath, Object object) {
         checkArgument(!fieldPath.isEmpty());
         String fieldMapping = fieldMapping(fieldPath);
         checkState(!addUpdates.containsKey(fieldMapping));
+        AttributeValue value = schema.toAttrValue(object);
         setUpdates.put(fieldMapping,
                 fieldMapping + " = " + constantMapping(fieldPath, value));
         return getParent();
@@ -173,10 +174,11 @@ public abstract class ExpressionBuilder<T, P, B> implements Mappings, UpdateExpr
     }
 
     @Override
-    public P add(ImmutableList<String> fieldPath, AttributeValue value) {
+    public P add(ImmutableList<String> fieldPath, Object object) {
         checkArgument(!fieldPath.isEmpty());
         String fieldMapping = fieldMapping(fieldPath);
         checkState(!addUpdates.containsKey(fieldMapping));
+        AttributeValue value = schema.toAttrValue(object);
         addUpdates.put(fieldMapping,
                 fieldMapping + " " + constantMapping(fieldPath, value));
         return getParent();
