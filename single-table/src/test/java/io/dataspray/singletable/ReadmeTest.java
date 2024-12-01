@@ -18,6 +18,7 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static io.dataspray.singletable.TableType.Gsi;
 import static io.dataspray.singletable.TableType.Primary;
@@ -140,6 +141,20 @@ public class ReadmeTest extends AbstractDynamoTest {
 
     @Test(timeout = 20_000L)
     public void testQuery() throws Exception {
+        TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
+        Processor processor = account -> log.info("Account: {}", account);
+
+        // ---------
+
+        List<Account> accounts = schema.query()
+                // Query by partition key
+                .keyConditionsEqualsPrimaryKey(Map.of("accountId", "12345"))
+                .executeStream(client)
+                .collect(Collectors.toList());
+    }
+
+    @Test(timeout = 20_000L)
+    public void testQueryOld() throws Exception {
         TableSchema<Account> schema = singleTable.parseTableSchema(Account.class);
         Processor processor = account -> log.info("Account: {}", account);
 

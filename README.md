@@ -159,9 +159,18 @@ Account updatedAccount = schema.update()
 
 ### Query ranges with paging
 
-In this example, we will be querying all range keys for a given partition key.
+In this example, we will be querying all range keys for a given partition key. The simple way is to use the
+`executeStream` or `executeStreamBatch` methods that automatically perform paging for you as you iterate the stream.
 
-On every request, we check if there are more results with `getLastEvaluatedKey` and then providing this cursor back
+```java
+List<Account> accounts = schema.query()
+        // Query by partition key
+        .keyConditionsEqualsPrimaryKey(Map.of("accountId", "12345"))
+        .executeStream(client)
+        .collect(Collectors.toList());
+```
+
+To do this manually instead, on every request, we check if there are more results with `getLastEvaluatedKey` and then providing this cursor back
 using `withExclusiveStartKey` to continue quering where we left off.
 
 ```java
