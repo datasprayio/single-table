@@ -19,4 +19,10 @@ public interface DynamoMapper {
     <T> IndexSchema<T> parseLocalSecondaryIndexSchema(long indexNumber, Class<T> objClazz);
 
     <T> IndexSchema<T> parseGlobalSecondaryIndexSchema(long indexNumber, Class<T> objClazz);
+
+    <T> ShardedTableSchema<T> parseShardedTableSchema(Class<T> objClazz);
+
+    <T> ShardedIndexSchema<T> parseShardedLocalSecondaryIndexSchema(long indexNumber, Class<T> objClazz);
+
+    <T> ShardedIndexSchema<T> parseShardedGlobalSecondaryIndexSchema(long indexNumber, Class<T> objClazz);
 }

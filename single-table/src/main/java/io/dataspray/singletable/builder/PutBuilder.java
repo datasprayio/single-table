@@ -25,7 +25,7 @@ public class PutBuilder<T> extends ExpressionBuilder<T, PutBuilder<T>, PutItemRe
 
     public PutBuilder<T> item(T item) {
         this.itemOpt = Optional.of(item);
-        return this;
+        return getParent();
     }
 
     public PutItemRequest.Builder builder() {

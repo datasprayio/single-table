@@ -3,9 +3,11 @@
 package io.dataspray.singletable;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Charsets;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.*;
+import com.google.common.hash.Hashing;
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
@@ -205,17 +207,32 @@ class DynamoMapperImpl implements DynamoMapper {
 
     @Override
     public <T> TableSchema<T> parseTableSchema(Class<T> objClazz) {
-        return parseSchema(Primary, -1, objClazz);
+        return parseSchema(Primary, -1, objClazz, false);
     }
 
     @Override
     public <T> IndexSchema<T> parseLocalSecondaryIndexSchema(long indexNumber, Class<T> objClazz) {
-        return parseSchema(Lsi, indexNumber, objClazz);
+        return parseSchema(Lsi, indexNumber, objClazz, false);
     }
 
     @Override
     public <T> IndexSchema<T> parseGlobalSecondaryIndexSchema(long indexNumber, Class<T> objClazz) {
-        return parseSchema(Gsi, indexNumber, objClazz);
+        return parseSchema(Gsi, indexNumber, objClazz, false);
+    }
+
+    @Override
+    public <T> ShardedTableSchema<T> parseShardedTableSchema(Class<T> objClazz) {
+        return parseSchema(Primary, -1, objClazz, true);
+    }
+
+    @Override
+    public <T> ShardedIndexSchema<T> parseShardedLocalSecondaryIndexSchema(long indexNumber, Class<T> objClazz) {
+        return parseSchema(Lsi, indexNumber, objClazz, true);
+    }
+
+    @Override
+    public <T> ShardedIndexSchema<T> parseShardedGlobalSecondaryIndexSchema(long indexNumber, Class<T> objClazz) {
+        return parseSchema(Gsi, indexNumber, objClazz, true);
     }
 
     private String getTableOrIndexName(TableType type, long indexNumber) {
@@ -261,11 +278,15 @@ class DynamoMapperImpl implements DynamoMapper {
         return shardKeyFields.length == 0
                 ? obj -> partitionKeyValueGetter.apply(obj, null)
                 : obj -> partitionKeyValueGetter.apply(obj,
-                DynamoUtil.deterministicPartition(
+                deterministicPartition(
                         StringSerdeUtil.mergeStrings(
                                 Arrays.stream(shardKeyFields)
                                         .map(field -> fieldMapper.apply(obj, field))
                                         .toArray(String[]::new)), shardCount));
+    }
+
+    public int deterministicPartition(String input, int partitionCount) {
+        return Math.abs(Hashing.murmur3_32_fixed().hashString(input, Charsets.UTF_8).asInt() % partitionCount);
     }
 
     private <T, F> BiFunction<T, Integer, String> getPartitionKeyValueGetter(F[] partitionKeyFields, String shardPrefix, BiFunction<T, F, String> fieldMapper) {
@@ -278,7 +299,7 @@ class DynamoMapperImpl implements DynamoMapper {
                 .toArray(String[]::new));
     }
 
-    private <T> SchemaImpl<T> parseSchema(TableType type, long indexNumber, Class<T> objClazz) {
+    private <T> SchemaImpl<T> parseSchema(TableType type, long indexNumber, Class<T> objClazz, boolean expectToBeSharded) {
         DynamoTable[] dynamoTables = objClazz.getDeclaredAnnotationsByType(DynamoTable.class);
         checkState(dynamoTables.length > 0, "Class " + objClazz + " is missing DynamoTable annotation");
         DynamoTable dynamoTable = Arrays.stream(dynamoTables)
@@ -290,6 +311,14 @@ class DynamoMapperImpl implements DynamoMapper {
         String[] shardKeys = dynamoTable.shardKeys();
         int shardCount = dynamoTable.shardCount();
         String shardPrefix = dynamoTable.shardPrefix();
+        if (expectToBeSharded) {
+            checkState(shardCount > -1, "Expecting shardCount for type " + type + " with index " + indexNumber);
+            checkState(shardKeys.length > 0, "Expecting shardKeys for type " + type + " with index " + indexNumber);
+        } else {
+            checkState(shardCount == -1, "Not expecting shardCount for type " + type + " with index " + indexNumber);
+            checkState("shard".equals(shardPrefix), "Not expecting shardPrefix for type " + type + " with index " + indexNumber);
+            checkState(shardKeys.length == 0, "Not expecting shardKeys for type " + type + " with index " + indexNumber);
+        }
         String[] rangeKeys = dynamoTable.rangeKeys();
         String rangePrefix = dynamoTable.rangePrefix();
         String tableName = getTableOrIndexName(Primary, indexNumber);
@@ -462,8 +491,8 @@ class DynamoMapperImpl implements DynamoMapper {
                 Function<T, String> partitionKeyValueGetter = this.<T, Function<T, String>>getPartitionKeyValueGetter(
                         dtPartitionKeyMappers.toArray(Function[]::new),
                         dtShardKeyMappers.toArray(Function[]::new),
-                        shardCount,
-                        shardPrefix,
+                        dt.shardCount(),
+                        dt.shardPrefix(),
                         (obj, mapper) -> mapper.apply(obj));
                 toItemOtherKeysMapperBuilder.put(
                         dtPartitionKeyName,
@@ -611,7 +640,7 @@ class DynamoMapperImpl implements DynamoMapper {
     }
 
     @RequiredArgsConstructor
-    public class SchemaImpl<T> implements TableSchema<T>, IndexSchema<T> {
+    public class SchemaImpl<T> implements TableSchema<T>, ShardedTableSchema<T>, IndexSchema<T>, ShardedIndexSchema<T> {
         private final TableType type;
         private final String[] partitionKeys;
         private final String[] shardKeys;
@@ -640,7 +669,12 @@ class DynamoMapperImpl implements DynamoMapper {
 
         @Override
         public QueryBuilder<T> query() {
-            return new QueryBuilder<>(this);
+            return new QueryBuilder<>(this, indexNameOpt);
+        }
+
+        @Override
+        public ShardedQueryBuilder<T> querySharded() {
+            return new ShardedQueryBuilder<>(this, indexNameOpt);
         }
 
         @Override
@@ -663,7 +697,6 @@ class DynamoMapperImpl implements DynamoMapper {
             return new UpdateBuilder<>(this);
         }
 
-        @Override
         public Optional<String> indexNameOpt() {
             return indexNameOpt;
         }
@@ -682,7 +715,8 @@ class DynamoMapperImpl implements DynamoMapper {
 
         @Override
         public Map<String, AttributeValue> primaryKey(Map<String, Object> values) {
-            checkState(partitionKeys.length + rangeKeys.length >= values.size(), "Unexpected extra values, partition keys %s range keys %s values %s", partitionKeys, rangeKeys, values);
+            checkState(partitionKeys.length + rangeKeys.length + shardKeys.length >= values.size(), "Unexpected extra values, partition keys %s range keys %s shard keys %s values %s",
+                    Arrays.toString(partitionKeys), Arrays.toString(rangeKeys), Arrays.toString(shardKeys), values);
             return Map.ofEntries(
                     partitionKey(values),
                     rangeKey(values, false));

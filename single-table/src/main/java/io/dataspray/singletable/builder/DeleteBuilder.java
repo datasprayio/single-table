@@ -27,7 +27,7 @@ public class DeleteBuilder<T> extends ExpressionBuilder<T, DeleteBuilder<T>, Del
 
     public DeleteBuilder<T> key(Map<String, Object> primaryKey) {
         this.keyOpt = Optional.of(schema.primaryKey(primaryKey));
-        return this;
+        return getParent();
     }
 
     public DeleteItemRequest.Builder builder() {

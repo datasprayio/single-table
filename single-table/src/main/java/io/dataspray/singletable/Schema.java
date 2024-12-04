@@ -3,7 +3,6 @@
 package io.dataspray.singletable;
 
 import com.google.common.collect.ImmutableMap;
-import io.dataspray.singletable.builder.QueryBuilder;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.Condition;
 
@@ -13,9 +12,6 @@ import java.util.Optional;
 
 public interface Schema<T> {
     String tableName();
-
-
-    QueryBuilder<T> query();
 
 
     Map<String, AttributeValue> primaryKey(T obj);
@@ -93,11 +89,4 @@ public interface Schema<T> {
     String serializeShardedLastEvaluatedKey(ShardAndExclusiveStartKey shardAndExclusiveStartKey);
 
     ShardAndExclusiveStartKey toShardedExclusiveStartKey(String serializedShardedLastEvaluatedKey);
-
-
-    /**
-     * If this is an IndexSchema, returns the name of the index.
-     */
-    @Deprecated
-    Optional<String> indexNameOpt();
 }

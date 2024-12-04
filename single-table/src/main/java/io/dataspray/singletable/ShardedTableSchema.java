@@ -4,11 +4,11 @@ package io.dataspray.singletable;
 
 import io.dataspray.singletable.builder.*;
 
-public interface TableSchema<T> extends Schema<T> {
+public interface ShardedTableSchema<T> extends Schema<T> {
 
     GetBuilder<T> get();
 
-    QueryBuilder<T> query();
+    ShardedQueryBuilder<T> querySharded();
 
     PutBuilder<T> put();
 

@@ -13,6 +13,7 @@
         </encoder>
     </appender>
 
+    <logger name="io.dataspray" level="TRACE"/>
     <logger name="ch.qos.logback" level="INFO"/>
     <logger name="org.reflections.Reflections" level="INFO"/>
 

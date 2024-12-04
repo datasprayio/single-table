@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.dataspray.singletable;
 
-import io.dataspray.singletable.builder.QueryBuilder;
+import io.dataspray.singletable.builder.ShardedQueryBuilder;
 
-public interface IndexSchema<T> extends Schema<T> {
+public interface ShardedIndexSchema<T> extends Schema<T> {
     String indexName();
 
-    QueryBuilder<T> query();
+    ShardedQueryBuilder<T> querySharded();
 }

@@ -26,7 +26,7 @@ public class GetBuilder<T> extends ExpressionBuilder<T, GetBuilder<T>, GetItemRe
 
     public GetBuilder<T> key(Map<String, Object> primaryKey) {
         this.keyOpt = Optional.of(schema.primaryKey(primaryKey));
-        return this;
+        return getParent();
     }
 
     public GetItemRequest.Builder builder() {

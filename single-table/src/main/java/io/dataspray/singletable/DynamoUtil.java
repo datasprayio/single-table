@@ -5,6 +5,7 @@ package io.dataspray.singletable;
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableList;
 import com.google.common.hash.Hashing;
+import io.dataspray.singletable.DynamoMapperImpl.SchemaImpl;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
@@ -16,16 +17,20 @@ import java.util.function.Consumer;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
+@Deprecated
 class DynamoUtil {
 
+    @Deprecated
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
         return fetchShardNextPage(client, schema, cursorOpt, maxPageSize, Map.of(), null);
     }
 
+    @Deprecated
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions) {
         return fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions, null);
     }
 
+    @Deprecated
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions, Consumer<QueryRequest.Builder> queryRequestConsumer) {
         checkArgument(maxPageSize > 0, "Max page size must be greater than zero");
         Optional<ShardAndExclusiveStartKey> shardAndExclusiveStartKeyOpt = cursorOpt.map(schema::toShardedExclusiveStartKey);
@@ -34,7 +39,7 @@ class DynamoUtil {
             int shard = shardAndExclusiveStartKeyOpt.map(ShardAndExclusiveStartKey::getShard).orElse(0);
             QueryRequest.Builder queryBuilder = QueryRequest.builder()
                     .tableName(schema.tableName());
-            schema.indexNameOpt().ifPresent(queryBuilder::indexName);
+            ((SchemaImpl<T>) schema).indexNameOpt().ifPresent(queryBuilder::indexName);
             queryBuilder
                     .keyConditions(schema.attrMapToConditions(schema.shardKey(shard, keyConditions)))
                     .limit(maxPageSize)
@@ -61,6 +66,7 @@ class DynamoUtil {
                 shardAndExclusiveStartKeyOpt.map(schema::serializeShardedLastEvaluatedKey));
     }
 
+    @Deprecated
     public static int deterministicPartition(String input, int partitionCount) {
         return Math.abs(Hashing.murmur3_32_fixed().hashString(input, Charsets.UTF_8).asInt() % partitionCount);
     }

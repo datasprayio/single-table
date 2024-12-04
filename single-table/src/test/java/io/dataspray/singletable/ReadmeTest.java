@@ -5,6 +5,7 @@ package io.dataspray.singletable;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import io.dataspray.singletable.DynamoConvertersProxy.OverrideCollectionTypeConverter;
 import io.dataspray.singletable.DynamoConvertersProxy.OverrideTypeConverter;
 import io.dataspray.singletable.builder.QueryBuilder;
@@ -13,11 +14,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static io.dataspray.singletable.TableType.Gsi;
@@ -86,7 +89,7 @@ public class ReadmeTest extends AbstractDynamoTest {
                 .executeGetPrevious(client);
     }
 
-    @Test(timeout = 20_000L)
+    @Test(timeout = 20_000L, expected = ConditionalCheckFailedException.class)
     public void testPut() throws Exception {
         String apiKey = "api-key";
         String entryId = "entry-id";
@@ -95,19 +98,20 @@ public class ReadmeTest extends AbstractDynamoTest {
         // ---------
 
         Account updatedAccount = schema.update()
-                .key(Map.of("accountId", "1234fsd432e5"))
+                .key(Map.of("accountId", "12345"))
 
                 // Apply conditions
-                .conditionNotExists()
-                .conditionFieldNotExists("email")
-                //                .conditionFieldNotEquals("apiKey", "123")
+                .conditionExists()
+                .conditionFieldExists("cancelDate")
+                .conditionFieldEquals("isCancelled", false)
 
                 // Modify data
-                .set("accountId", "asfasdf")
-                .set("email", "grfgerfg")
+                .set("apiKey", apiKey)
                 .setIncrement("votersCount", 1)
+                // Add to a set
+                .add("transactionIds", ImmutableSet.of("4234", "5312"))
                 // Remove entry from a json field
-                //                .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
+                .remove(ImmutableList.of("entryJson", entryId, "isMoved"))
 
                 .executeGetUpdated(client);
     }
@@ -188,7 +192,8 @@ public class ReadmeTest extends AbstractDynamoTest {
 
     @Value
     @AllArgsConstructor
-    @DynamoTable(type = Primary, shardKeys = {"catId"}, shardPrefix = "cat", shardCount = 100, rangePrefix = "cat", rangeKeys = "catId")
+    @DynamoTable(type = Primary, partitionKeys = "catId", rangePrefix = "cat")
+    @DynamoTable(type = Gsi, indexNumber = 1, shardKeys = {"catId"}, shardPrefix = "cat", shardCount = 100, rangePrefix = "catSharded", rangeKeys = "catId")
     public static class Cat {
         @NonNull
         String catId;
@@ -197,37 +202,23 @@ public class ReadmeTest extends AbstractDynamoTest {
     @Test(timeout = 20_000L)
     public void testScanType() throws Exception {
 
-        TableSchema<Cat> schema = singleTable.parseTableSchema(Cat.class);
+        TableSchema<Cat> schemaPrimary = singleTable.parseTableSchema(Cat.class);
+        // Parse GSI schema as sharded
+        ShardedIndexSchema<Cat> schemaGsi = singleTable.parseShardedGlobalSecondaryIndexSchema(1, Cat.class);
+
+        // Insert some data first
+        schemaPrimary.put().item(new Cat("A18D5B00")).execute(client);
+        schemaPrimary.put().item(new Cat("6JI43J39")).execute(client);
+        schemaPrimary.put().item(new Cat("OQT39G83")).execute(client);
+
+        // Finally let's dump all our cats using pagination
+        Set<Cat> cats = schemaGsi.querySharded()
+                .executeStream(client)
+                .collect(Collectors.toSet());
 
         // ---------
 
-        String catId = "A18D5B00";
-        Cat myCat = new Cat(catId);
-
-        // Insertion is same as before, sharding is done under the hood
-        schema.put()
-                .item(myCat)
-                .execute(client);
-
-        // Retrieving cat is also same as before
-        Optional<Cat> catOpt = schema.get()
-                .key(Map.of("catId", catId))
-                .executeGet(client);
-
-        // Finally let's dump all our cats using pagination
-        Optional<String> cursorOpt = Optional.empty();
-        do {
-            ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
-                    client,
-                    schema,
-                    /* Pagination token */ cursorOpt,
-                    /* page size */ 100);
-            cursorOpt = result.getCursorOpt();
-            processCats(result.getItems());
-        } while (cursorOpt.isPresent());
-    }
-
-    private void processCats(ImmutableList<Cat> cats) {
+        assertEquals(3, cats.size());
     }
 
 

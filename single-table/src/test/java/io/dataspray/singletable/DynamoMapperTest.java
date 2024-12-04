@@ -4,6 +4,7 @@ package io.dataspray.singletable;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import lombok.AllArgsConstructor;
 import lombok.NonNull;
 import lombok.Value;
@@ -169,7 +170,8 @@ public class DynamoMapperTest extends AbstractDynamoTest {
     @Value
     @AllArgsConstructor
     @DynamoTable(type = Primary, partitionKeys = {"f2"}, shardKeys = {"f1"}, shardCount = 20, rangePrefix = "prefixDataShardedTestPrimary", rangeKeys = {"f3"})
-    @DynamoTable(type = Gsi, indexNumber = 1, shardKeys = {"f1", "f2"}, shardCount = 20, rangeKeys = {"f3"}, rangePrefix = "prefixDataShardedTestGsi")
+    @DynamoTable(type = Gsi, indexNumber = 1, shardKeys = {"f1", "f2"}, shardCount = 20, rangeKeys = {"f3"}, rangePrefix = "prefixDataShardedTestGsi1")
+    @DynamoTable(type = Gsi, indexNumber = 2, shardKeys = {"f1", "f2"}, shardCount = 4, rangeKeys = {"f3"}, rangePrefix = "prefixDataShardedTestGsi2")
     public static class DataSharded {
         @NonNull
         String f1;
@@ -181,8 +183,73 @@ public class DynamoMapperTest extends AbstractDynamoTest {
 
     @Test(timeout = 20_000L)
     public void testSharded() throws Exception {
-        TableSchema<DataSharded> primary = mapper.parseTableSchema(DataSharded.class);
-        IndexSchema<DataSharded> gsi = mapper.parseGlobalSecondaryIndexSchema(1, DataSharded.class);
+        ShardedTableSchema<DataSharded> primary = mapper.parseShardedTableSchema(DataSharded.class);
+        ShardedIndexSchema<DataSharded> gsi1 = mapper.parseShardedGlobalSecondaryIndexSchema(1, DataSharded.class);
+        ShardedIndexSchema<DataSharded> gsi2 = mapper.parseShardedGlobalSecondaryIndexSchema(2, DataSharded.class);
+
+        DataSharded data1 = new DataSharded("1-1", "1-2", "1-3");
+        DataSharded data2 = new DataSharded("2-1", "2-2", "2-3");
+        DataSharded data3 = new DataSharded("3-1", "3-2", "3-3");
+
+        log.info("Table description {}", client.describeTable(DescribeTableRequest.builder()
+                        .tableName(primary.tableName()).build())
+                .table());
+        Map.of(1, data1, 2, data2, 3, data3).forEach((num, data) -> {
+            log.info("toItem(data{}) = {}", num, primary.toAttrMap(data));
+        });
+        assertEquals(Optional.empty(), primary.put().item(data1).executeGetPrevious(client));
+        assertEquals(Optional.empty(), primary.put().item(data2).executeGetPrevious(client));
+        assertEquals(Optional.empty(), primary.put().item(data3).executeGetPrevious(client));
+        assertEquals(Optional.of(data1), primary.get().key(Map.of("f1", data1.f1, "f2", data1.f2, "f3", data1.f3)).executeGet(client));
+        assertEquals(Optional.of(data2), primary.get().key(Map.of("f1", data2.f1, "f2", data2.f2, "f3", data2.f3)).executeGet(client));
+        assertEquals(Optional.of(data3), primary.get().key(Map.of("f1", data3.f1, "f2", data3.f2, "f3", data3.f3)).executeGet(client));
+
+        List<ImmutableSet<DataSharded>> primaryExpectedBatches = List.of(
+                ImmutableSet.of(data1)
+        );
+        assertEquals(primaryExpectedBatches, primary
+                .querySharded()
+                .keyConditionValues(Map.of("f2", data1.getF2()))
+                .executeStreamBatch(client)
+                .collect(Collectors.toList()));
+        assertEquals(primaryExpectedBatches.stream().flatMap(ImmutableSet::stream).collect(Collectors.toSet()), primary
+                .querySharded()
+                .keyConditionValues(Map.of("f2", data1.getF2()))
+                .executeStream(client)
+                .collect(Collectors.toSet()));
+
+        List<ImmutableSet<DataSharded>> gsi1ExpectedBatches = List.of(
+                ImmutableSet.of(data3),
+                ImmutableSet.of(data2),
+                ImmutableSet.of(data1)
+        );
+        assertEquals(gsi1ExpectedBatches, gsi1
+                .querySharded()
+                .executeStreamBatch(client)
+                .collect(Collectors.toList()));
+        assertEquals(gsi1ExpectedBatches.stream().flatMap(ImmutableSet::stream).collect(Collectors.toSet()), gsi1
+                .querySharded()
+                .builder(b -> b.limit(2))
+                .executeStream(client).collect(Collectors.toSet()));
+
+        List<ImmutableSet<DataSharded>> gsi2ExpectedBatches = List.of(
+                ImmutableSet.of(data3, data2),
+                ImmutableSet.of(data1)
+        );
+        assertEquals(gsi2ExpectedBatches, gsi2
+                .querySharded()
+                .executeStreamBatch(client)
+                .collect(Collectors.toList()));
+        assertEquals(gsi2ExpectedBatches.stream().flatMap(ImmutableSet::stream).collect(Collectors.toSet()), gsi2
+                .querySharded()
+                .builder(b -> b.limit(2))
+                .executeStream(client).collect(Collectors.toSet()));
+    }
+
+    @Test(timeout = 20_000L)
+    public void testShardedDeprecatedApi() throws Exception {
+        ShardedTableSchema<DataSharded> primary = mapper.parseShardedTableSchema(DataSharded.class);
+        ShardedIndexSchema<DataSharded> gsi = mapper.parseShardedGlobalSecondaryIndexSchema(1, DataSharded.class);
 
         DataSharded data1 = new DataSharded("1-1", "1-2", "1-3");
         DataSharded data2 = new DataSharded("2-1", "2-2", "2-3");
@@ -230,7 +297,7 @@ public class DynamoMapperTest extends AbstractDynamoTest {
 
     @Test(timeout = 20_000L)
     public void testAttrVal() throws Exception {
-        TableSchema<DataSharded> primary = mapper.parseTableSchema(DataSharded.class);
+        ShardedTableSchema<DataSharded> primary = mapper.parseShardedTableSchema(DataSharded.class);
 
         assertEquals(AttributeValue.fromM(Map.of("A", AttributeValue.fromN("7"))),
                 primary.toAttrValue(Map.of("A", 7L)));

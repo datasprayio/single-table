@@ -33,7 +33,7 @@ public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>, Upd
 
     public UpdateBuilder<T> key(Map<String, Object> primaryKey) {
         this.keyOpt = Optional.of(schema.primaryKey(primaryKey));
-        return this;
+        return getParent();
     }
 
     @Override
@@ -95,7 +95,7 @@ public class UpdateBuilder<T> extends ExpressionBuilder<T, UpdateBuilder<T>, Upd
      */
     public UpdateBuilder<T> suppressNonExistent() {
         this.suppressNonExistentValidation = true;
-        return this;
+        return getParent();
     }
 
     void validateNonExistent() {

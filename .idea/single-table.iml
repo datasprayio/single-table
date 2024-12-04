@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module type="JAVA_MODULE" version="4">
-  <component name="NewModuleRootManager" inherit-compiler-output="true">
-    <exclude-output />
-    <content url="file://$MODULE_DIR$" />
-    <orderEntry type="inheritedJdk" />
-    <orderEntry type="sourceFolder" forTests="false" />
+  <component name="AdditionalModuleElements">
+    <content url="file://$MODULE_DIR$/single-table">
+      <sourceFolder url="file://$MODULE_DIR$/single-table/src/main/java" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/single-table/src/test/java" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/single-table/src/test/resources" type="java-test-resource" />
+      <excludeFolder url="file://$MODULE_DIR$/single-table/target" />
+    </content>
   </component>
 </module>

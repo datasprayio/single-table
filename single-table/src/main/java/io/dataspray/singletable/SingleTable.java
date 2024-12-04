@@ -77,18 +77,49 @@ public class SingleTable implements DynamoMapper {
         return mapper.parseGlobalSecondaryIndexSchema(indexNumber, objClazz);
     }
 
+    @Override
+    public <T> ShardedTableSchema<T> parseShardedTableSchema(Class<T> objClazz) {
+        return mapper.parseShardedTableSchema(objClazz);
+    }
+
+    @Override
+    public <T> ShardedIndexSchema<T> parseShardedLocalSecondaryIndexSchema(long indexNumber, Class<T> objClazz) {
+        return mapper.parseShardedLocalSecondaryIndexSchema(indexNumber, objClazz);
+    }
+
+    @Override
+    public <T> ShardedIndexSchema<T> parseShardedGlobalSecondaryIndexSchema(long indexNumber, Class<T> objClazz) {
+        return mapper.parseShardedGlobalSecondaryIndexSchema(indexNumber, objClazz);
+    }
+
+    /**
+     * @deprecated use {@link ShardedTableSchema#querySharded} or {@link ShardedIndexSchema#querySharded}
+     */
+    @Deprecated
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize) {
         return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize);
     }
 
+    /**
+     * @deprecated use {@link ShardedTableSchema#querySharded} or {@link ShardedIndexSchema#querySharded}
+     */
+    @Deprecated
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions) {
         return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions);
     }
 
+    /**
+     * @deprecated use {@link ShardedTableSchema#querySharded} or {@link ShardedIndexSchema#querySharded}
+     */
+    @Deprecated
     public <T> ShardPageResult<T> fetchShardNextPage(DynamoDbClient client, Schema<T> schema, Optional<String> cursorOpt, int maxPageSize, Map<String, Object> keyConditions, Consumer<QueryRequest.Builder> queryRequestConsumer) {
         return util.fetchShardNextPage(client, schema, cursorOpt, maxPageSize, keyConditions, queryRequestConsumer);
     }
 
+    /**
+     * @deprecated use {@link ShardedTableSchema#querySharded} or {@link ShardedIndexSchema#querySharded}
+     */
+    @Deprecated
     public int deterministicPartition(String input, int partitionCount) {
         return DynamoUtil.deterministicPartition(input, partitionCount);
     }

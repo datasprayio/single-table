@@ -76,6 +76,7 @@ Latest release in Maven Central is [here](https://search.maven.org/artifact/io.d
 - [Scan records of specific type](#scan-records-of-specific-type)
 - [Upsert (Update or create if missing)](#upsert-update-or-create-if-missing))
 - [Filter records](#filter-records)
+- [Custom mapping of objects and collections](#custom-mapping-of-objects-and-collections)
 
 ### Getting started
 
@@ -200,7 +201,7 @@ do {
 ### Scan records of specific type
 
 You may have Cats and Dogs inside your single-table design and you want to retrieve all the Cats without having to also
-iterate over all the dogs.
+scan over all the dogs.
 
 One way to do this is using a DynamoDB technique
 called [sharding](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-sharding.html). To
@@ -217,33 +218,33 @@ Our schema can look like this:
     }
 ```
 
+Alternatively, we can use sharding on a GSI instead:
+
+```java
+    @DynamoTable(type = Primary, partitionKeys = "catId", rangePrefix = "cat")
+    @DynamoTable(type = Gsi, indexNumber = 1, shardKeys = {"catId"}, shardPrefix = "cat", shardCount = 100)
+    public class Cat {
+        @NonNull String catId;
+    }
+```
+
 And our usage would be:
 
 ```java
-String catId = "A18D5B00";
-Cat myCat = new Cat(catId);
 
-// Insertion is same as before, sharding is done under the hood
-schema.put()
-        .item(myCat)
-        .execute(client);
+TableSchema<Cat> schemaPrimary = singleTable.parseTableSchema(Cat.class);
+// Parse GSI schema as sharded
+ShardedIndexSchema<Cat> schemaGsi = singleTable.parseShardedGlobalSecondaryIndexSchema(1, Cat.class);
 
-// Retrieving cat is also same as before
-Optional<Cat> catOpt = schema.get()
-        .key(Map.of("catId", catId))
-        .executeGet(client);
+// Insert some data first
+schemaPrimary.put().item(new Cat("A18D5B00")).execute(client);
+schemaPrimary.put().item(new Cat("6JI43J39")).execute(client);
+schemaPrimary.put().item(new Cat("OQT39G83")).execute(client);
 
 // Finally let's dump all our cats using pagination
-Optional<String> cursorOpt = Optional.empty();
-do {
-    ShardPageResult<Cat> result = singleTable.fetchShardNextPage(
-            client,
-            schema,
-            /* Pagination token */ cursorOpt,
-            /* page size */ 100);
-    cursorOpt = result.getCursorOpt();
-    processCats(result.getItems());
-} while (cursorOpt.isPresent());
+Set<Cat> cats = schemaGsi.querySharded()
+        .executeStream(client)
+        .collect(Collectors.toSet());
 ```
 
 ### Upsert (Update or create if missing)
