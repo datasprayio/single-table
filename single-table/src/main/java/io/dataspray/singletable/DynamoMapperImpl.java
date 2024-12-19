@@ -6,6 +6,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.base.Throwables;
 import com.google.common.collect.*;
 import com.google.common.hash.Hashing;
 import com.google.gson.Gson;
@@ -20,8 +21,13 @@ import lombok.extern.slf4j.Slf4j;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.GlobalSecondaryIndexProps;
 import software.amazon.awscdk.services.dynamodb.LocalSecondaryIndexProps;
+import software.amazon.awssdk.core.internal.waiters.DefaultWaiter;
+import software.amazon.awssdk.core.waiters.Waiter;
+import software.amazon.awssdk.core.waiters.WaiterAcceptor;
+import software.amazon.awssdk.core.waiters.WaiterResponse;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.dynamodb.waiters.internal.WaitersRuntime;
 import software.constructs.Construct;
 
 import javax.annotation.Nullable;
@@ -113,6 +119,18 @@ class DynamoMapperImpl implements DynamoMapper {
     @Override
     public void createTableIfNotExists(DynamoDbClient dynamo, int lsiCount, int gsiCount) {
         String tableName = getTableName();
+        TableDescription tableDescription;
+        try {
+            tableDescription = dynamo.describeTable(DescribeTableRequest.builder().tableName(tableName).build()).table();
+        } catch (ResourceNotFoundException ex) {
+            tableDescription = createTable(dynamo, lsiCount, gsiCount);
+        }
+        updateTableIndexes(dynamo, lsiCount, gsiCount, tableDescription);
+        updateTableTtl(dynamo);
+    }
+
+    private TableDescription createTable(DynamoDbClient dynamo, int lsiCount, int gsiCount) {
+        String tableName = getTableName();
 
         ArrayList<KeySchemaElement> primaryKeySchemas = Lists.newArrayList();
         ArrayList<AttributeDefinition> primaryAttributeDefinitions = Lists.newArrayList();
@@ -181,12 +199,87 @@ class DynamoMapperImpl implements DynamoMapper {
         if (!globalSecondaryIndexes.isEmpty()) {
             createTableRequestBuilder.globalSecondaryIndexes(globalSecondaryIndexes);
         }
-        try {
-            dynamo.createTable(createTableRequestBuilder.build());
-            log.info("Table {} created", tableName);
-        } catch (ResourceInUseException ex) {
-            log.trace("Table {} already exists", tableName);
+        dynamo.createTable(createTableRequestBuilder.build());
+        log.info("Table {} creating...", tableName);
+        WaiterResponse<DescribeTableResponse> response = dynamo.waiter().waitUntilTableExists(DescribeTableRequest.builder()
+                .tableName(tableName)
+                .build());
+        response.matched().exception().ifPresent(ex -> Throwables.propagate(ex));
+        log.info("Table {} created", tableName);
+        return response.matched().response().orElseThrow().table();
+    }
+
+    private void updateTableIndexes(DynamoDbClient dynamo, int lsiCount, int gsiCount, TableDescription tableDescription) {
+        String tableName = getTableName();
+
+        int lsiCountActual = tableDescription.localSecondaryIndexes().size();
+        checkArgument(lsiCount == lsiCountActual, "Requested %s LSIs but table already has %s LSIs, LSIs cannot be changed without dropping the table.", lsiCount, lsiCountActual);
+
+        Map<String, GlobalSecondaryIndexDescription> gsisToDelete = tableDescription.globalSecondaryIndexes().stream()
+                .collect(Collectors.toMap(
+                        GlobalSecondaryIndexDescription::indexName,
+                        i -> i
+                ));
+        Set<Long> gsiIndexesToCreate = Sets.newHashSet();
+
+        LongStream.range(1, gsiCount + 1).forEach(indexNumber -> {
+            String gsiName = getTableOrIndexName(Gsi, indexNumber);
+            if (gsisToDelete.remove(gsiName) == null) {
+                gsiIndexesToCreate.add(indexNumber);
+            }
+        });
+        if (gsiIndexesToCreate.isEmpty() && gsisToDelete.isEmpty()) {
+            return;
         }
+        Map<String, AttributeDefinition> primaryAttributeDefinitions = tableDescription.attributeDefinitions().stream()
+                .collect(Collectors.toMap(
+                        AttributeDefinition::attributeName,
+                        i -> i));
+        gsisToDelete.forEach((gsiNameToDelete, gsiToDelete) -> {
+            log.info("Table {} deleting GSI index: {}", tableName, gsiNameToDelete);
+            gsiToDelete.keySchema().stream()
+                    .map(KeySchemaElement::attributeName)
+                    .forEach(primaryAttributeDefinitions::remove);
+            dynamo.updateTable(UpdateTableRequest.builder()
+                    .tableName(tableName)
+                    .attributeDefinitions(ImmutableList.copyOf(primaryAttributeDefinitions.values()))
+                    .globalSecondaryIndexUpdates(GlobalSecondaryIndexUpdate.builder()
+                            .delete(DeleteGlobalSecondaryIndexAction.builder()
+                                    .indexName(gsiNameToDelete)
+                                    .build()).build()).build());
+            waitUntilGsiDeleted(dynamo, tableName, gsiNameToDelete);
+        });
+        gsiIndexesToCreate.forEach(indexNumber -> {
+            String gsiNameToCreate = getTableOrIndexName(Gsi, indexNumber);
+            log.info("Table {} creating GSI index: {}", tableName, gsiNameToCreate);
+            primaryAttributeDefinitions.put(getPartitionKeyName(Gsi, indexNumber), AttributeDefinition.builder()
+                    .attributeName(getPartitionKeyName(Gsi, indexNumber))
+                    .attributeType(ScalarAttributeType.S).build());
+            primaryAttributeDefinitions.put(getRangeKeyName(Gsi, indexNumber), AttributeDefinition.builder()
+                    .attributeName(getRangeKeyName(Gsi, indexNumber))
+                    .attributeType(ScalarAttributeType.S).build());
+            dynamo.updateTable(UpdateTableRequest.builder()
+                    .tableName(tableName)
+                    .attributeDefinitions(ImmutableList.copyOf(primaryAttributeDefinitions.values()))
+                    .globalSecondaryIndexUpdates(GlobalSecondaryIndexUpdate.builder()
+                            .create(CreateGlobalSecondaryIndexAction.builder()
+                                    .indexName(gsiNameToCreate)
+                                    .projection(Projection.builder()
+                                            .projectionType(ProjectionType.ALL).build())
+                                    .keySchema(ImmutableList.of(
+                                            KeySchemaElement.builder()
+                                                    .attributeName(getPartitionKeyName(Gsi, indexNumber))
+                                                    .keyType(KeyType.HASH).build(),
+                                            KeySchemaElement.builder()
+                                                    .attributeName(getRangeKeyName(Gsi, indexNumber))
+                                                    .keyType(KeyType.RANGE).build()))
+                                    .build()).build()).build());
+            waitUntilGsiCreated(dynamo, tableName, gsiNameToCreate);
+        });
+    }
+
+    private void updateTableTtl(DynamoDbClient dynamo) {
+        String tableName = getTableName();
 
         TimeToLiveDescription desc = dynamo.describeTimeToLive(DescribeTimeToLiveRequest.builder()
                         .tableName(tableName)
@@ -201,8 +294,41 @@ class DynamoMapperImpl implements DynamoMapper {
                     .timeToLiveSpecification(TimeToLiveSpecification.builder()
                             .enabled(true)
                             .attributeName(SingleTable.TTL_IN_EPOCH_SEC_ATTR_NAME).build()).build());
-            log.info("Table {} TTL set", tableName);
+            log.info("Table {} Updated TTL", tableName);
         }
+    }
+
+    private WaiterResponse<DescribeTableResponse> waitUntilGsiCreated(DynamoDbClient dynamo, String tableName, String indexName) {
+        Waiter.Builder<DescribeTableResponse> builder = DefaultWaiter.<DescribeTableResponse>builder()
+                .addAcceptor(WaiterAcceptor.successOnResponseAcceptor(response -> getIndexStatus(response, indexName).map(IndexStatus.ACTIVE::equals).orElse(false)))
+                .addAcceptor(WaiterAcceptor.retryOnResponseAcceptor(response -> getIndexStatus(response, indexName).map(IndexStatus.CREATING::equals).orElse(false)))
+                .addAcceptor(WaiterAcceptor.errorOnResponseAcceptor(response -> getIndexStatus(response, indexName).map(IndexStatus.DELETING::equals).orElse(false)))
+                .addAcceptor(WaiterAcceptor.errorOnResponseAcceptor(response -> getIndexStatus(response, indexName).isEmpty()));
+        WaitersRuntime.DEFAULT_ACCEPTORS.forEach(builder::addAcceptor);
+        return builder.build().run(() -> dynamo.describeTable(DescribeTableRequest.builder()
+                .tableName(tableName)
+                .build()));
+    }
+
+    private WaiterResponse<DescribeTableResponse> waitUntilGsiDeleted(DynamoDbClient dynamo, String tableName, String indexName) {
+        Waiter.Builder<DescribeTableResponse> builder = DefaultWaiter.<DescribeTableResponse>builder()
+                .addAcceptor(WaiterAcceptor.successOnResponseAcceptor(response -> getIndexStatus(response, indexName).isEmpty()))
+                .addAcceptor(WaiterAcceptor.retryOnResponseAcceptor(response -> getIndexStatus(response, indexName).map(IndexStatus.DELETING::equals).orElse(false)))
+                .addAcceptor(WaiterAcceptor.errorOnResponseAcceptor(response -> getIndexStatus(response, indexName).map(IndexStatus.CREATING::equals).orElse(false)))
+                .addAcceptor(WaiterAcceptor.errorOnResponseAcceptor(response -> getIndexStatus(response, indexName).map(IndexStatus.ACTIVE::equals).orElse(false)));
+        WaitersRuntime.DEFAULT_ACCEPTORS.forEach(builder::addAcceptor);
+        return builder.build().run(() -> dynamo.describeTable(DescribeTableRequest.builder()
+                .tableName(tableName)
+                .build()));
+    }
+
+    private Optional<IndexStatus> getIndexStatus(DescribeTableResponse response, String indexName) {
+        return response.table()
+                .globalSecondaryIndexes()
+                .stream()
+                .filter(i -> indexName.equals(i.indexName()))
+                .map(GlobalSecondaryIndexDescription::indexStatus)
+                .findAny();
     }
 
     @Override

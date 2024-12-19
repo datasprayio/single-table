@@ -309,4 +309,24 @@ public class DynamoMapperTest extends AbstractDynamoTest {
         assertEquals(null,
                 primary.toAttrValue(Set.of()));
     }
+
+    @Test(timeout = 20_000L)
+    public void testGsiScaleUp() throws Exception {
+        mapper.createTableIfNotExists(client, 2, 3);
+    }
+
+    @Test(timeout = 20_000L)
+    public void testGsiScaleDown() throws Exception {
+        mapper.createTableIfNotExists(client, 2, 1);
+    }
+
+    @Test(timeout = 20_000L, expected = IllegalArgumentException.class)
+    public void testLsiScaleUp() throws Exception {
+        mapper.createTableIfNotExists(client, 3, 2);
+    }
+
+    @Test(timeout = 20_000L, expected = IllegalArgumentException.class)
+    public void testLsiScaleDown() throws Exception {
+        mapper.createTableIfNotExists(client, 1, 2);
+    }
 }
