@@ -1,4 +1,5 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 
     <modelVersion>4.0.0</modelVersion>
 
@@ -39,8 +40,8 @@
 
     <properties>
         <java.version>11</java.version>
-        <aws.sdk.version>2.21.29</aws.sdk.version>
-        <aws.cdk.version>2.77.0</aws.cdk.version>
+        <aws.sdk.version>2.29.47</aws.sdk.version>
+        <aws.cdk.version>2.175.1</aws.cdk.version>
         <slf4j.version>1.7.25</slf4j.version>
         <logback.version>1.2.9</logback.version>
         <lombok.version>1.18.22</lombok.version>
