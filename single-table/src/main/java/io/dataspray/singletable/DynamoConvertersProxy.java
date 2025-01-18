@@ -20,7 +20,7 @@ import java.util.*;
 import java.util.stream.Stream;
 
 
-class DynamoConvertersProxy {
+public class DynamoConvertersProxy {
 
     @Value
     public static class Converters {
